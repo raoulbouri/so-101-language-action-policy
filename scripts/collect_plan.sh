@@ -56,9 +56,16 @@ while [ "$seed" -lt "$end" ]; do
   shard="$PARTDIR/part_$(printf '%06d' "$seed").hdf5"
   SHARDS+=("$shard")
 
-  if [ -f "$shard" ]; then
-    log "[$(date +%H:%M:%S)] shard $shard already present -- skipping"
+  # File existence is NOT enough: a shard killed mid-run still opens cleanly and
+  # reports a plausible episode count, so skipping on existence alone would leave
+  # a silent hole in the dataset. Check it was actually finalized.
+  if STATUS=$($PY scripts/shard_complete.py "$shard" "$n" 2>&1); then
+    log "[$(date +%H:%M:%S)] shard $(basename "$shard") $STATUS -- skipping"
   else
+    if [ -f "$shard" ]; then
+      log "[$(date +%H:%M:%S)] shard $(basename "$shard") $STATUS -- discarding and recollecting"
+      rm -f "$shard" "${shard%.hdf5}.json"
+    fi
     log "[$(date +%H:%M:%S)] --- batch: $n episodes from seed $seed ---"
     # --plain-log keeps the tee'd log readable; per-shard report avoids the
     # collision you get from a single shared --report path.
@@ -66,7 +73,7 @@ while [ "$seed" -lt "$end" ]; do
           --num-episodes "$n" --start-seed "$seed" \
           --image-height "$RES" --image-width "$RES" \
           --out "$shard" --report "${shard%.hdf5}.json" \
-          --plain-log --skip-existing 2>&1 | tee -a "$LOG"; then
+          --plain-log 2>&1 | tee -a "$LOG"; then
       log "[$(date +%H:%M:%S)] batch at seed $seed FAILED -- re-run this script to retry"
       FAILED=1
     fi

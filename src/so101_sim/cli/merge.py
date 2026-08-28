@@ -39,6 +39,11 @@ def merge(shards: list[Path], out: Path, overwrite: bool = False) -> int:
                 if i == 0 and "metadata" in src:
                     src.copy("metadata", dst)
                 meta = src["metadata"].attrs if "metadata" in src else {}
+                # A shard killed mid-collection still opens cleanly. Merging it
+                # silently would bake a hole into the training set, so say so.
+                if "episodes_attempted" not in meta:
+                    print(f"  ! {shard.name} was never finalized (interrupted "
+                          f"run) -- merging it anyway, but it is short")
                 attempted += int(meta.get("episodes_attempted", 0))
                 succeeded += int(meta.get("episodes_successful", 0))
                 names = sorted(k for k in src if k.startswith("episode_"))

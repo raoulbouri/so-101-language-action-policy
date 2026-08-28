@@ -1,11 +1,26 @@
+# --- Python ---
 __pycache__/
 *.py[cod]
-.venv/
 *.egg-info/
-data/
-out/
+.venv/
 .pytest_cache/
 .ruff_cache/
+
+# --- Generated data and artefacts ---
+data/
+out/
 *.hdf5
 *.mp4
+*.png
+!assets/**/*.png
+
+# --- Agent-authored working notes (kept locally, not committed) ---
+# The measured rationale behind every physical constant lives inline in
+# src/so101_sim/constants.py, and the HDF5 schema in recorder.py's docstring,
+# so the code stays self-documenting without these.
+docs/
+CLAUDE.md
+MEMORY.md
+
+# --- OS ---
 .DS_Store

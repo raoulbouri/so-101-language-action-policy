@@ -1,7 +1,7 @@
 VENV ?= .venv
 PY   ?= $(VENV)/bin/python
 
-.PHONY: help setup test eval collect preview inspect verify replay viewer lint clean
+.PHONY: help setup test eval collect merge preview inspect verify replay viewer lint clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -17,12 +17,16 @@ test:  ## run the unit and property test suite
 eval:  ## 100-seed expert success evaluation on held-out seeds
 	$(PY) -m so101_sim.cli.evaluate --num-seeds 100
 
-collect:  ## generate a dataset (override N, WORKERS, OUT)
+collect:  ## generate a dataset (override N, SEED, RES, OUT)
 	$(PY) -m so101_sim.cli.collect \
 	  --num-episodes $(or $(N),100) \
-	  --num-workers $(or $(WORKERS),4) \
+	  --start-seed $(or $(SEED),0) \
+	  --image-height $(or $(RES),128) --image-width $(or $(RES),128) \
 	  --out $(or $(OUT),data/so101_lang_act.hdf5) \
 	  --report $(or $(REPORT),data/collection_report.json)
+
+merge:  ## merge dataset shards: make merge SHARDS="data/part_*.hdf5" OUT=data/train.hdf5
+	$(PY) -m so101_sim.cli.merge $(SHARDS) --out $(or $(OUT),data/train.hdf5)
 
 preview:  ## render one episode to mp4 (override SEED)
 	$(PY) -m so101_sim.cli.visualize --seed $(or $(SEED),5)

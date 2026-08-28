@@ -54,7 +54,8 @@ expert only ever commands *top-down* grasps, which is exactly the family the
 arm can hit precisely (`shoulder_pan` picks the plane, three joints work in it,
 `wrist_roll` spins the jaws). The usable straight-down workspace is a measured
 annulus of r ∈ [0.16, 0.26] m — not the 0.478 m raw kinematic reach. See
-[docs/DECISIONS.md](docs/DECISIONS.md) D-003 and D-004.
+the module docstring of `src/so101_sim/kinematics.py` and the workspace
+comment in `src/so101_sim/constants.py`.
 
 ## Verifying the data
 
@@ -69,18 +70,19 @@ make inspect                # schema and summary
 never re-simulate. A policy trains on the bytes in the file, and those are what
 can be silently wrong.
 
-## Documentation
+## Where the knowledge lives
 
-| File | Purpose |
+This repo is intentionally self-documenting — there is no separate docs tree to
+drift out of date.
+
+| Question | Answer lives in |
 | --- | --- |
-| [CLAUDE.md](CLAUDE.md) | Working agreement for coding agents on this repo |
-| [MEMORY.md](MEMORY.md) | Durable project facts that survive across sessions |
-| [docs/PROGRESS.md](docs/PROGRESS.md) | Running build log — what is done, in flight, not started |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Module map and data flow |
-| [docs/DECISIONS.md](docs/DECISIONS.md) | Design decisions and their rationale |
-| [docs/ISSUES.md](docs/ISSUES.md) | Known bugs, misconceptions, and open risks |
-| [docs/DATASET_SPEC.md](docs/DATASET_SPEC.md) | Exact on-disk HDF5 schema |
-| [docs/README.md](docs/README.md) | Index of the above |
+| Why does a physical constant have this value? | Inline comments in `src/so101_sim/constants.py`, each carrying the measurement that produced it |
+| What is the on-disk HDF5 schema? | Module docstring of `src/so101_sim/recorder.py` |
+| How does a policy consume this data? | `scripts/act_dataloader_example.py` |
+| Why top-down grasps only? | Module docstring of `src/so101_sim/kinematics.py` |
+| What do the seven phases do? | `src/so101_sim/expert_policy.py` |
+| Is my generated data sound? | `make verify` |
 
 ## Scope note
 
@@ -88,9 +90,8 @@ This repo is the **data-generation pipeline**. The directive's final section
 describes modifying an ACT *training* codebase to consume `language_embedding`
 as a conditioning token; no ACT model is vendored or trained here. The dataset is
 shaped to make that change direct, and `scripts/act_dataloader_example.py` plus
-`docs/DATASET_SPEC.md` pin down exactly how the embedding is meant to enter the
-CVAE encoder and transformer decoder. See `docs/PROGRESS.md` for the full
-in-scope / out-of-scope list.
+the `recorder.py` docstring pin down exactly how the embedding is meant to
+enter the CVAE encoder and transformer decoder.
 
 ## Assets
 

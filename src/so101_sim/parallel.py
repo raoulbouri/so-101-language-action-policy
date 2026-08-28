@@ -54,7 +54,8 @@ def _collect_shard(job: dict[str, Any]) -> dict[str, Any]:
     episodes: list[dict[str, Any]] = []
 
     with DatasetWriter(out, chunk_size=job["chunk_size"], encoder_name=job["encoder_name"],
-                       embed_dim=job["embed_dim"], image_size=image_size) as writer:
+                       embed_dim=job["embed_dim"], image_size=image_size,
+                       overwrite=True) as writer:
         for seed in seeds:
             stats["attempted"] += 1
             try:
@@ -105,7 +106,12 @@ def collect_parallel(
     image_size: tuple[int, int],
     keep_failures: bool,
     prefer_clip: bool,
+    overwrite: bool = False,
 ) -> dict[str, Any]:
+    if out.exists() and not overwrite:
+        raise FileExistsError(
+            f"{out} already exists. Pass --overwrite to replace it."
+        )
     num_workers = max(1, min(num_workers, len(seeds)))
 
     # Derive every instruction from its seed and embed them all in one pass,

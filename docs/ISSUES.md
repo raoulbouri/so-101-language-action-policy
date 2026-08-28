@@ -153,6 +153,37 @@ happily invent a root cause that does not exist.
 
 ---
 
+## ISSUE-006 — Two collection runs raced on one output path (RESOLVED)
+
+**Symptom.** After a collection run, `data/so101_lang_act.hdf5` contained **10**
+episodes while `data/collection_report.json` sitting next to it described **40**.
+Two artifacts of the same run, disagreeing.
+
+**Root cause.** A long background collection was believed dead and a second run
+was started against the same `--out` path. Both were alive. `h5py.File(path,
+"w")` truncates without complaint, and nothing in the pipeline noticed that two
+writers were pointed at one file.
+
+**Why the data was not corrupted.** The second run `rm -f`'d the path before
+opening it, so the first writer kept a handle to the now-*unlinked* inode. Its 40
+episodes were written to a deleted file and freed on close. The surviving HDF5
+was the second run's, complete and internally consistent — verified by reopening
+it and checking group count, seeds and per-episode array shapes. That was luck,
+not design: with a different ordering the two writers would have interleaved into
+one file.
+
+**Fix.** `DatasetWriter` now refuses to open an existing path unless
+`overwrite=True` (`--overwrite` on the CLI), so a stale or concurrent run fails
+loudly instead of silently clobbering. Guarded by
+`tests/test_dataset.py::test_writer_refuses_to_clobber_an_existing_dataset`.
+
+**Lesson.** "The process isn't in `pgrep`" is not proof it is gone, and a
+truncating open is a silent destructive default. Also: when two artifacts that
+describe the same run disagree, verify the *data*, do not reason about which
+writer probably won.
+
+---
+
 ## Open risks
 
 - **RISK-001 — Success is measured on the scripted expert, not on a policy.**

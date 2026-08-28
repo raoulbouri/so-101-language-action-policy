@@ -67,9 +67,19 @@ class DatasetWriter:
         embed_dim: int = 512,
         image_size: tuple[int, int] = IMAGE_SIZE,
         compression: str | None = "gzip",
+        overwrite: bool = False,
     ):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # h5py's "w" mode truncates without complaint. Two collection runs
+        # pointed at one path will then interleave and leave the .hdf5 and its
+        # JSON report describing different things, with nothing to flag it.
+        # Refuse by default rather than silently clobber.
+        if self.path.exists() and not overwrite:
+            raise FileExistsError(
+                f"{self.path} already exists. Pass --overwrite to replace it "
+                f"(or choose another --out); refusing to truncate silently."
+            )
         self.chunk_size = chunk_size
         self.compression = compression
         self._file = h5py.File(self.path, "w")

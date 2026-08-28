@@ -31,6 +31,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="skip CLIP and use the deterministic hashing encoder")
     p.add_argument("--report", type=Path, default=None,
                    help="write a JSON collection report here")
+    p.add_argument("--overwrite", action="store_true",
+                   help="replace --out if it already exists")
     p.add_argument("--num-workers", type=int, default=1,
                    help="parallel worker processes. NOTE: on macOS MuJoCo's "
                         "offscreen renderer contends across processes -- measured "
@@ -51,6 +53,7 @@ def _main_parallel(args, image_size: tuple[int, int]) -> int:
         image_size=image_size,
         keep_failures=args.keep_failures,
         prefer_clip=not args.no_clip,
+        overwrite=args.overwrite,
     )
     stats = result["stats"]
     elapsed = time.time() - t0
@@ -90,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
         encoder_name=encoder.name,
         embed_dim=encoder.dim,
         image_size=image_size,
+        overwrite=args.overwrite,
     ) as writer:
         seeds = range(args.start_seed, args.start_seed + args.num_episodes)
         for seed in tqdm(seeds, desc="episodes"):

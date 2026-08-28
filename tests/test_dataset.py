@@ -27,6 +27,15 @@ def test_chunk_mask_counts_the_remaining_real_actions():
     assert mask.sum(axis=1).tolist() == [4, 4, 4, 4, 4, 4, 4, 3, 2, 1]
 
 
+def test_writer_refuses_to_clobber_an_existing_dataset(tmp_path):
+    """Two runs on one path previously left the .hdf5 and its report disagreeing."""
+    path = tmp_path / "ds.hdf5"
+    DatasetWriter(path).finalize()
+    with pytest.raises(FileExistsError):
+        DatasetWriter(path)
+    DatasetWriter(path, overwrite=True).finalize()  # explicit opt-in is fine
+
+
 @pytest.fixture(scope="module")
 def written(tmp_path_factory):
     runner = EpisodeRunner(image_size=(64, 80), render=True)

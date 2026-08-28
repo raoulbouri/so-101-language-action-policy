@@ -1,0 +1,44 @@
+[project]
+name = "so101-sim"
+version = "0.1.0"
+description = "Language-conditioned ACT dataset generation for the LeRobot SO-101 arm in MuJoCo"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "mujoco>=3.3.0",
+    "numpy>=1.26",
+    "h5py>=3.11",
+    "tqdm>=4.66",
+    "imageio[ffmpeg]>=2.34",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# Frozen text encoder for language_embedding. Kept optional so the physics
+# pipeline can run on machines without torch.
+text = [
+    "torch>=2.2",
+    "transformers>=4.40",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+so101-collect = "so101_sim.cli.collect:main"
+so101-eval = "so101_sim.cli.evaluate:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/so101_sim"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

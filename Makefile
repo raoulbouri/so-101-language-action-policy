@@ -1,7 +1,7 @@
 VENV ?= .venv
 PY   ?= $(VENV)/bin/python
 
-.PHONY: help setup test eval collect merge preview inspect verify replay viewer lint clean
+.PHONY: help setup test eval collect plan merge preview inspect verify replay viewer lint clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -24,6 +24,11 @@ collect:  ## generate a dataset (override N, SEED, RES, OUT)
 	  --image-height $(or $(RES),128) --image-width $(or $(RES),128) \
 	  --out $(or $(OUT),data/so101_lang_act.hdf5) \
 	  --report $(or $(REPORT),data/collection_report.json)
+
+plan:  ## resumable batch collection: make plan EPISODES=1200 BATCH=200
+	EPISODES=$(or $(EPISODES),1200) BATCH=$(or $(BATCH),200) \
+	RES=$(or $(RES),128) OUT=$(or $(OUT),data/train.hdf5) \
+	./scripts/collect_plan.sh
 
 merge:  ## merge dataset shards: make merge SHARDS="data/part_*.hdf5" OUT=data/train.hdf5
 	$(PY) -m so101_sim.cli.merge $(SHARDS) --out $(or $(OUT),data/train.hdf5)

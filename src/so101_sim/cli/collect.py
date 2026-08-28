@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from tqdm import tqdm
@@ -33,6 +35,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="write a JSON collection report here")
     p.add_argument("--overwrite", action="store_true",
                    help="replace --out if it already exists")
+    p.add_argument("--skip-existing", action="store_true",
+                   help="exit successfully if --out already exists; lets a batch "
+                        "driver be re-run without redoing finished shards")
+    p.add_argument("--plain-log", action="store_true",
+                   help="one timestamped line per episode instead of a progress "
+                        "bar. Auto-enabled when stdout is not a terminal, so "
+                        "piping to tee produces a readable log.")
     p.add_argument("--num-workers", type=int, default=1,
                    help="parallel worker processes. NOTE: on macOS MuJoCo's "
                         "offscreen renderer contends across processes -- measured "
@@ -73,9 +82,56 @@ def _main_parallel(args, image_size: tuple[int, int]) -> int:
     return 0 if stats["errors"] == 0 else 1
 
 
+def _now() -> str:
+    """Local wall-clock stamp for the log (tz-aware, so it survives DST)."""
+    return datetime.now().astimezone().strftime("%H:%M:%S")
+
+
+class _Progress:
+    """Progress reporting that survives being piped to a file.
+
+    tqdm redraws with carriage returns, which turns a tee'd log into one
+    enormous line. When stdout is not a terminal we emit a timestamped line per
+    episode instead, carrying the running rate and an ETA.
+    """
+
+    def __init__(self, seeds, plain: bool):
+        self.seeds = list(seeds)
+        self.total = len(self.seeds)
+        self.plain = plain
+        self.t0 = time.time()
+        self.done = 0
+        self._bar = None
+        if not plain:
+            self._bar = tqdm(total=self.total, desc="episodes")
+        else:
+            print(f"[{_now()}] collecting {self.total} episodes "
+                  f"(seeds {self.seeds[0]}..{self.seeds[-1]})", flush=True)
+
+    def update(self, seed: int, note: str) -> None:
+        self.done += 1
+        if self._bar is not None:
+            self._bar.update(1)
+            return
+        elapsed = time.time() - self.t0
+        rate = elapsed / self.done
+        eta = timedelta(seconds=int(rate * (self.total - self.done)))
+        print(f"[{_now()}] {self.done:5d}/{self.total} "
+              f"seed {seed:<6d} {note:<34s} {rate:5.1f}s/ep  ETA {eta}", flush=True)
+
+    def close(self) -> None:
+        if self._bar is not None:
+            self._bar.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     image_size = (args.image_height, args.image_width)
+
+    if args.skip_existing and args.out.exists():
+        print(f"{args.out} already exists -- skipping (--skip-existing)")
+        return 0
+    plain = args.plain_log or not sys.stdout.isatty()
 
     if args.num_workers > 1:
         return _main_parallel(args, image_size)
@@ -96,13 +152,15 @@ def main(argv: list[str] | None = None) -> int:
         overwrite=args.overwrite,
     ) as writer:
         seeds = range(args.start_seed, args.start_seed + args.num_episodes)
-        for seed in tqdm(seeds, desc="episodes"):
+        progress = _Progress(seeds, plain)
+        for seed in seeds:
             stats["attempted"] += 1
             try:
                 episode = runner.run(sample_episode(seed))
             except Exception as exc:  # noqa: BLE001
                 stats["errors"] += 1
                 per_episode.append({"seed": seed, "error": f"{type(exc).__name__}: {exc}"})
+                progress.update(seed, f"ERROR {type(exc).__name__}")
                 continue
 
             stats["succeeded"] += int(episode.success.success)
@@ -115,6 +173,12 @@ def main(argv: list[str] | None = None) -> int:
             if episode.success.success or args.keep_failures:
                 writer.add_episode(episode, encoder.encode_one(episode.instruction))
                 stats["written"] += 1
+            progress.update(
+                seed,
+                ("ok  " if episode.success.success else "FAIL") +
+                f" centre {episode.success.center_distance * 1000:5.1f}mm",
+            )
+        progress.close()
 
         writer.finalize({
             "episodes_attempted": stats["attempted"],

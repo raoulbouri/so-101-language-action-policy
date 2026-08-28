@@ -27,14 +27,17 @@ LOG="logs/collect_$(date +%Y%m%d_%H%M%S).log"
 log() { echo "$*" | tee -a "$LOG"; }
 
 # --- preflight -------------------------------------------------------------
-# ~8.1 MB/episode at 128px, measured. Refuse to start a run that cannot finish.
-NEED_MB=$(( EPISODES * 9 ))
+# ~8.1 MB/episode at 128px, measured. The shards are KEPT alongside the merged
+# file, so peak usage is two copies -- budget 2x plus a little headroom, or the
+# run dies at the merge step with everything already collected.
+PER_EP_MB=9
+NEED_MB=$(( EPISODES * PER_EP_MB * 2 + 1024 ))
 FREE_MB=$(df -m . | awk 'NR==2{print $4}')
 log "=== SO-101 collection plan ==="
 log "episodes   : $EPISODES  (batches of $BATCH, seeds from $START)"
 log "resolution : ${RES}x${RES}"
 log "output     : $OUT   (shards in $PARTDIR)"
-log "disk       : need ~${NEED_MB} MB, have ${FREE_MB} MB free"
+log "disk       : need ~${NEED_MB} MB peak (shards + merged copy), have ${FREE_MB} MB free"
 if [ "$FREE_MB" -lt "$NEED_MB" ]; then
   log "ABORT: not enough free disk space."
   exit 1
@@ -88,4 +91,5 @@ $PY scripts/verify_dataset.py "$OUT" 2>&1 | tee -a "$LOG"
 
 log ""
 log "=== done. dataset: $OUT ==="
-log "shards kept in $PARTDIR (delete once you trust the merge)"
+log "shards kept in $PARTDIR -- once you trust the merge, reclaim ~$(( EPISODES * PER_EP_MB )) MB with:"
+log "    rm -rf $PARTDIR"

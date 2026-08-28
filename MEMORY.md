@@ -46,5 +46,16 @@ narrative belongs in `docs/`.
 
 - Expert success: **100/100** on held-out seeds 10000–10099 (strict footprint
   criterion), median centre error 3.0 mm, p90 4.6 mm.
-- Throughput ≈ **0.19 s/episode** without rendering; rendering two 240×320
-  cameras is the dominant cost when collecting.
+- Throughput: **0.2–0.4 s/episode** physics-only; **≈10 s/episode** with two
+  240×320 cameras on an idle machine. Rendering is ~98% of collection cost.
+- Multiprocess collection gives only **1.3×** at 4 workers on macOS — MuJoCo's
+  offscreen renderer contends across processes. Expect better on Linux/EGL.
+- **Check `uptime` before trusting any timing measurement here.** Orphaned pool
+  workers from a killed parent once pushed load average to 28 and made every
+  benchmark read ~15× slow, nearly producing a fabricated root cause.
+- A reference dataset lives at `data/so101_lang_act.hdf5`: 10 episodes,
+  444 steps each, 10/10 success, real CLIP ViT-B/32 embeddings.
+- `transformers` 5.x: `CLIPModel.get_text_features` returns a model-output
+  object, not a tensor. Use `CLIPTextModelWithProjection(...).text_embeds`.
+- MuJoCo `data.site_xpos` and friends return **live views**, not copies. Always
+  `.copy()` before comparing state across steps.

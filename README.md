@@ -1,17 +1,50 @@
-# so-101-sim
+# so-101-language-action-policy
 
-Language-conditioned imitation-learning data generation for the **LeRobot SO-101**
-arm in MuJoCo.
+**Language-conditioned imitation-learning data generation for the LeRobot SO-101
+arm in MuJoCo.**
 
-Simulates an open-ended tabletop manipulation matrix —
-*"Take [COLOR] [SHAPE] and place in [COLOR] [ZONE]"* — and emits an HDF5
+Generates expert demonstrations for an open-ended tabletop manipulation matrix —
+*"take the [COLOR] cube and place it in the [COLOR] circle"* — and emits an HDF5
 dataset shaped for a language-conditioned **ACT** (Action Chunking with
 Transformers) policy.
 
+<p align="center">
+  <img src="media/demo.gif" width="760" alt="SO-101 executing 'take the red cube and place it in the green circle'">
+</p>
+
+<p align="center">
+  <em>Rendered straight from the stored dataset — not a re-simulation. Left: scene
+  camera. Right: wrist camera. Bottom: the live phase, and commanded (orange) vs
+  observed (blue) joint positions.</em>
+</p>
+
+## Why this is not just pick-and-place
+
+Every scene contains **2–3 differently coloured cubes and 2–3 coloured target
+zones**, placed at random. The instruction is the only thing that says which cube
+goes where — so a policy that ignores the language gets the right cube barely 40%
+of the time by chance. Grounding has to be learned.
+
+<p align="center">
+  <img src="media/language_conditioning.gif" width="760" alt="A different instruction selects a different cube from the same kind of scene">
+</p>
+
+<p align="center">
+  <em>Same scene structure, different instruction: <code>"take the blue cube and
+  place it in the pink circle"</code>. The red and yellow cubes are distractors.</em>
+</p>
+
+## Pipeline
+
 ```
-scene randomization -> language instruction -> DLS-IK expert -> 7-phase
-quintic trajectory -> 30 Hz recording (scene cam + wrist cam + qpos + action)
--> HDF5 + frozen text embedding -> binary success validator
+seed
+ └─ semantic randomization   2-3 coloured cubes + 2-3 coloured zones, random poses
+ └─ language instruction     "take the red cube and place it in the green circle"
+ └─ DLS-IK expert            damped least squares on MuJoCo analytical Jacobians
+ └─ 7-phase quintic path     hover · approach · grasp · lift · transit · place · release
+ └─ 50 Hz recording          scene cam + wrist cam + qpos + qvel + action
+ └─ HDF5                     action chunks + frozen CLIP ViT-B/32 embedding
+ └─ strict success validator every cube corner inside the zone, at rest
 ```
 
 ## Results
@@ -31,20 +64,22 @@ inside the zone perimeter, cube resting on the table and at rest.
 
 ```bash
 make setup                 # uv venv on Python 3.13 + install with dev,text extras
-make test                  # 43 unit and property tests
+make test                  # 44 unit and property tests
 make eval                  # 100-seed expert success evaluation
 make preview SEED=5        # render one episode to data/episode.mp4
-make collect N=100 WORKERS=4
-make inspect
+make collect N=100         # generate a dataset
+make verify                # health-check what was generated
 ```
 
-Or directly:
+Collecting at scale — run in resumable batches and merge, rather than one
+multi-hour job:
 
 ```bash
-uv run python -m so101_sim.cli.collect --num-episodes 100 --num-workers 4 \
-    --out data/so101_lang_act.hdf5 --report data/collection_report.json
-uv run python -m so101_sim.cli.evaluate --num-seeds 100
-uv run python -m so101_sim.cli.visualize --seed 5
+for s in 0 200 400 600 800 1000; do
+  make collect N=200 SEED=$s RES=128 OUT=data/part_$s.hdf5
+done
+make merge SHARDS="data/part_*.hdf5" OUT=data/train.hdf5
+make verify OUT=data/train.hdf5
 ```
 
 ## What the robot actually does

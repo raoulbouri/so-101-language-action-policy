@@ -56,6 +56,19 @@ arm can hit precisely (`shoulder_pan` picks the plane, three joints work in it,
 annulus of r ∈ [0.16, 0.26] m — not the 0.478 m raw kinematic reach. See
 [docs/DECISIONS.md](docs/DECISIONS.md) D-003 and D-004.
 
+## Verifying the data
+
+```bash
+make verify                 # automated health checks on the stored dataset
+make replay EP=0            # render a STORED episode with overlays
+make viewer SEED=5          # interactive MuJoCo viewer (geometry inspection)
+make inspect                # schema and summary
+```
+
+`replay_dataset.py` and `verify_dataset.py` read **only what is on disk** — they
+never re-simulate. A policy trains on the bytes in the file, and those are what
+can be silently wrong.
+
 ## Documentation
 
 | File | Purpose |

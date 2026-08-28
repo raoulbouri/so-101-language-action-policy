@@ -78,6 +78,34 @@ Last updated: 2026-08-27.
     contaminated benchmark caused by orphaned pool workers pushing the load
     average to 28. Clean result: **1.30×** at 4 workers, renderer-bound.
 
+## Position against the reference blog
+
+The directive follows the pipeline in
+<https://www.aamir.me/getting-started-robotics/>, whose six steps are: choose a
+simulator → pick a task → **collect data** → train a model → evaluate n runs →
+iterate. We are at the **end of step 3**. Steps 4–6 are untouched.
+
+What that post learned the hard way, and where we already stand:
+
+| Their finding | Us |
+| --- | --- |
+| Experiment #1 failed at 30/100 because *"dataset labels were offset from observations"* | Pre-empted: the alignment contract is asserted by an exact-replay test and a dataset check |
+| Experiment #4 added quintic interpolation | Built in from the start |
+| Experiment #4 added a centring step before grasping | Phase 1b |
+| Experiment #4 added approach/clearance for the fixed jaw | Phases 2 and 7 |
+| Experiment #4 cut non-contact waiting | Phase durations tuned |
+| 300 episodes → 53 % policy; 1000 → 99 % | **We have 40** |
+| Single red cube, fixed green pad | We have 2–3 coloured cubes, 2–3 coloured zones, language-conditioned |
+
+Two honest caveats on that table:
+
+1. **Our 100/100 is the expert, not a policy.** It is the analogue of their data
+   collection succeeding, not of their 99/100 evaluation result. No policy has
+   been trained here, so no comparable number exists yet.
+2. **Our task is strictly harder than theirs.** Distractor objects and a language
+   instruction that selects among them mean the 300/1000-episode figures are a
+   *floor*, not a target.
+
 ## Not done / out of scope
 
 - **Item 18 — modifying the ACT model itself.** The directive's final section

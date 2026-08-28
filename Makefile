@@ -1,7 +1,7 @@
 VENV ?= .venv
 PY   ?= $(VENV)/bin/python
 
-.PHONY: help setup test eval collect preview inspect lint clean
+.PHONY: help setup test eval collect preview inspect verify replay viewer lint clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -29,6 +29,16 @@ preview:  ## render one episode to mp4 (override SEED)
 
 inspect:  ## print the structure of a dataset (override OUT)
 	$(PY) scripts/inspect_dataset.py $(or $(OUT),data/so101_lang_act.hdf5)
+
+verify:  ## automated health checks on a dataset (reads disk, never re-simulates)
+	$(PY) scripts/verify_dataset.py $(or $(OUT),data/so101_lang_act.hdf5)
+
+replay:  ## render a stored episode to mp4 with overlays (override EP, OUT)
+	$(PY) scripts/replay_dataset.py $(or $(OUT),data/so101_lang_act.hdf5) \
+	  --episode $(or $(EP),0)
+
+viewer:  ## interactive MuJoCo viewer for one seed (override SEED)
+	$(PY) -m so101_sim.cli.viewer --seed $(or $(SEED),5)
 
 lint:
 	$(VENV)/bin/ruff check src tests scripts

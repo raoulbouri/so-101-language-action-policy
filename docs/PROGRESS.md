@@ -35,12 +35,12 @@ Last updated: 2026-08-27.
 | Expert success, seeds 10000–10099 (held out) | **100 / 100** |
 | Expert success, seeds 0–249 | **250 / 250** |
 | Placement centre error | median 2.7–3.0 mm, p90 4.6 mm |
-| Unit + property tests | 43 passed |
+| Unit + property tests | 44 passed |
 | Throughput, physics only | ≈ 0.19 s/episode |
-| Throughput, with 2-camera rendering | ≈ 10 s/episode on an idle machine; 27–33 s/episode observed under contention |
+| Throughput, with 2-camera rendering | 10.04 s/episode measured over the 40-episode run on an idle machine; 27–33 s/episode observed under contention |
 | Episode length | 444 steps = 8.9 s at 50 Hz |
 | Dataset size | ≈ 22 MB/episode at 240×320, gzip |
-| Reference dataset shipped | `data/so101_lang_act.hdf5` — 10 episodes, 4 440 timesteps, 10/10 success, CLIP embeddings |
+| Dataset generated | `data/so101_lang_act.hdf5` — 40 episodes (seeds 0–39), 17 760 timesteps, 40/40 success, 15 distinct instructions, real CLIP embeddings, 851 MB |
 
 ## Build log
 

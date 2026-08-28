@@ -21,7 +21,8 @@ quintic trajectory -> 30 Hz recording (scene cam + wrist cam + qpos + action)
 | Expert success, held-out seeds 10000–10099 | **100 / 100** |
 | Expert success, seeds 0–249 | **250 / 250** |
 | Placement centre error | median 2.7 mm, p90 4.6 mm |
-| Tests | 43 passing |
+| Tests | 44 passing |
+| Generated dataset | 40 episodes, 17 760 timesteps, 40/40 success, 15 distinct instructions |
 
 Success is the directive's strict criterion: **every** base corner of the cube
 inside the zone perimeter, cube resting on the table and at rest.

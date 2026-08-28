@@ -53,8 +53,12 @@ narrative belongs in `docs/`.
 - **Check `uptime` before trusting any timing measurement here.** Orphaned pool
   workers from a killed parent once pushed load average to 28 and made every
   benchmark read ~15× slow, nearly producing a fabricated root cause.
-- A reference dataset lives at `data/so101_lang_act.hdf5`: 10 episodes,
-  444 steps each, 10/10 success, real CLIP ViT-B/32 embeddings.
+- The generated dataset is `data/so101_lang_act.hdf5` (gitignored, 851 MB):
+  40 episodes / seeds 0–39, 444 steps each, 17 760 timesteps, 40/40 success,
+  15 distinct instructions, real CLIP ViT-B/32 embeddings.
+- `DatasetWriter` refuses to open an existing path without `overwrite=True`
+  (`--overwrite`), after two concurrent runs left the HDF5 and its JSON report
+  disagreeing (ISSUE-006).
 - `transformers` 5.x: `CLIPModel.get_text_features` returns a model-output
   object, not a tensor. Use `CLIPTextModelWithProjection(...).text_embeds`.
 - MuJoCo `data.site_xpos` and friends return **live views**, not copies. Always

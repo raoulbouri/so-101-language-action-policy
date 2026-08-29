@@ -74,7 +74,7 @@ def test_compositional_split_rejects_removing_a_concept_entirely(scanned):
 
 
 def test_normalizer_uses_training_episodes_only(prepared):
-    eps, sp, norm = prepared
+    _, _, norm = prepared
     # Statistics must be finite, and std floored above zero.
     for arr in (norm.qpos_mean, norm.qpos_std, norm.action_mean, norm.action_std):
         assert np.isfinite(arr).all()

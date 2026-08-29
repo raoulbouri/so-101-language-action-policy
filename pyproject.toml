@@ -24,6 +24,15 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.5",
 ]
+# ACT training. torch/torchvision are the model; wandb is optional tracking.
+act = [
+    "torch>=2.2",
+    "torchvision>=0.17",
+    "transformers>=4.40",
+]
+tracking = [
+    "wandb>=0.16",
+]
 
 [project.scripts]
 so101-collect = "so101_sim.cli.collect:main"

@@ -12,7 +12,6 @@ from torch.utils.data import DataLoader
 
 from so101_act.config import Config
 from so101_act.data import (
-    Normalizer,
     SO101ACTDataset,
     collate,
     compute_normalizer,
@@ -42,7 +41,7 @@ def setup():
 
 def test_phase_chunk_looks_ahead_not_just_at_the_anchor(setup):
     """A chunk starting near the end of a short phase must show later phases too."""
-    eps, sp, norm, ds, *_ = setup
+    eps, sp, _, ds, *_ = setup
     ei = sp["val"][0]
     # `grasp` is the shortest phase; find a t where the anchor is in grasp but
     # the chunk runs past it.
@@ -65,7 +64,7 @@ def test_phase_chunk_looks_ahead_not_just_at_the_anchor(setup):
 
 
 def test_phase_chunk_matches_raw_hdf5_slice(setup):
-    eps, sp, norm, ds, *_ = setup
+    eps, sp, _, ds, *_ = setup
     ei = sp["val"][0]
     import h5py
     with h5py.File(HDF5, "r") as f:

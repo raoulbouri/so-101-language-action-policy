@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from so101_act.config import Config
@@ -36,6 +37,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--log-every", type=int, default=50)
     p.add_argument("--time-only", type=int, default=0,
                    help="run N steps purely to measure throughput, then exit")
+    # --- Weights & Biases -------------------------------------------------
+    p.add_argument("--wandb-project", default="",
+                   help="wandb project name; empty disables wandb entirely")
+    p.add_argument("--wandb-entity", default="",
+                   help="wandb team/user (optional)")
+    p.add_argument("--wandb-run-name", default="",
+                   help="run name; defaults to the output directory name")
+    p.add_argument("--wandb-group", default="",
+                   help="group runs together, e.g. 'e1-vs-e2'")
+    p.add_argument("--wandb-api-key", default=os.environ.get("WANDB_API_KEY", ""),
+                   help="API key. Prefer the WANDB_API_KEY env var so the key "
+                        "does not end up in your shell history.")
     return p
 
 
@@ -50,6 +63,9 @@ def main(argv=None) -> int:
         num_workers=a.num_workers, seed=a.seed, out_dir=out,
         split_mode=a.split_mode, holdout_combos=combos,
         val_every=a.val_every, log_every=a.log_every,
+        wandb_project=a.wandb_project, wandb_entity=a.wandb_entity,
+        wandb_run_name=a.wandb_run_name, wandb_group=a.wandb_group,
+        wandb_api_key=a.wandb_api_key,
     )
     trainer = Trainer(cfg)
 

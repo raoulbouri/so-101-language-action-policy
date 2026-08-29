@@ -28,6 +28,41 @@ from .data import (
 from .model import act_loss, build_model
 
 
+def init_wandb(cfg: Config, run_meta: dict):
+    """Optional Weights & Biases logging.
+
+    Returns the run handle, or None when wandb is unavailable or disabled. Kept
+    entirely optional so training never fails because of a logging dependency --
+    a run that dies at step 19,000 because wandb dropped its socket is a worse
+    outcome than losing the dashboard.
+    """
+    if not cfg.wandb_project:
+        return None
+    try:
+        import wandb
+    except ImportError:
+        print("[wandb] not installed; continuing without it "
+              "(pip install wandb, or pass --wandb-project '')")
+        return None
+    try:
+        if cfg.wandb_api_key:
+            wandb.login(key=cfg.wandb_api_key, relogin=True)
+        run = wandb.init(
+            project=cfg.wandb_project,
+            entity=cfg.wandb_entity or None,
+            name=cfg.wandb_run_name or Path(cfg.out_dir).name,
+            group=cfg.wandb_group or None,
+            tags=[cfg.conditioning, cfg.split_mode],
+            config={**cfg.to_dict(), **run_meta},
+            resume="allow",
+        )
+        print(f"[wandb] logging to {run.url}")
+        return run
+    except Exception as exc:  # noqa: BLE001
+        print(f"[wandb] init failed ({type(exc).__name__}: {exc}); continuing without it")
+        return None
+
+
 def pick_device(spec: str = "auto") -> torch.device:
     if spec != "auto":
         return torch.device(spec)
@@ -99,6 +134,14 @@ class Trainer:
         ]
         self.opt = torch.optim.AdamW(groups, lr=cfg.lr, weight_decay=cfg.weight_decay)
         self._save_run_metadata()
+        self.wandb = init_wandb(cfg, {
+            "git_hash": git_hash(),
+            "n_params": sum(p.numel() for p in self.model.parameters()),
+            "n_train_episodes": len(self.splits["train"]),
+            "n_val_episodes": len(self.splits["val"]),
+            "n_test_episodes": len(self.splits["test"]),
+            "device": str(self.device),
+        })
 
     # ------------------------------------------------------------------
     def _save_run_metadata(self) -> None:
@@ -215,6 +258,15 @@ class Trainer:
             if step % cfg.log_every == 0:
                 rec = {"step": step, "time": round(time.time() - t0, 1), **stats}
                 log_f.write(json.dumps(rec) + "\n"); log_f.flush()
+                if self.wandb is not None:
+                    self.wandb.log({
+                        "train/loss": stats["loss"],
+                        "train/action_loss": stats["action_loss"],
+                        "train/kl": stats["kl"],
+                        "train/lr": stats["lr"],
+                        "train/grad_norm": stats["grad_norm"],
+                        "train/elapsed_s": time.time() - t0,
+                    }, step=step)
                 print(f"[{step:6d}] loss {stats['loss']:8.4f} | act {stats['action_loss']:7.4f} "
                       f"| kl {stats['kl']:7.4f} | lr {stats['lr']:.2e} "
                       f"| gnorm {stats['grad_norm']:6.2f} | {time.time()-t0:6.0f}s", flush=True)
@@ -223,6 +275,9 @@ class Trainer:
                 v = self.evaluate(val_loader, cfg.max_val_batches)
                 rec = {"step": step, "val_action_loss": v["action_loss"], "val_kl": v["kl"]}
                 log_f.write(json.dumps(rec) + "\n"); log_f.flush()
+                if self.wandb is not None:
+                    self.wandb.log({"val/action_loss": v["action_loss"],
+                                    "val/kl": v["kl"]}, step=step)
                 print(f"  val: action {v['action_loss']:.4f} kl {v['kl']:.4f}", flush=True)
                 if v["action_loss"] < best_val:
                     best_val = v["action_loss"]
@@ -234,5 +289,9 @@ class Trainer:
 
         self.save_checkpoint(step, "final")
         log_f.close()
-        return {"steps": step, "best_val_action_loss": best_val,
-                "minutes": (time.time() - t0) / 60}
+        summary = {"steps": step, "best_val_action_loss": best_val,
+                   "minutes": (time.time() - t0) / 60}
+        if self.wandb is not None:
+            self.wandb.summary.update(summary)
+            self.wandb.finish()
+        return summary

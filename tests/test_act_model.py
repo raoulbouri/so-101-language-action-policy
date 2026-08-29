@@ -1,6 +1,5 @@
 """Model, loss and gradient checks (validation items 3-8, 10)."""
 
-import numpy as np
 import pytest
 import torch
 

@@ -71,6 +71,16 @@ class Config:
     seed: int = 0
     device: str = "auto"
 
+    # ---- experiment tracking ----------------------------------------------
+    # wandb is entirely optional: leave wandb_project empty to disable. The API
+    # key is NEVER written to config.json (see to_dict) so a run directory can
+    # be copied or committed without leaking a credential.
+    wandb_project: str = ""
+    wandb_entity: str = ""
+    wandb_run_name: str = ""
+    wandb_group: str = ""
+    wandb_api_key: str = ""
+
     # ---- bookkeeping ------------------------------------------------------
     out_dir: str = "runs/act"
     log_every: int = 50
@@ -84,8 +94,11 @@ class Config:
     def use_language(self) -> bool:
         return self.conditioning != "none"
 
-    def to_dict(self) -> dict[str, Any]:
-        return dataclasses.asdict(self)
+    def to_dict(self, redact_secrets: bool = True) -> dict[str, Any]:
+        d = dataclasses.asdict(self)
+        if redact_secrets and d.get("wandb_api_key"):
+            d["wandb_api_key"] = "<redacted>"
+        return d
 
     def save(self, path: str | Path) -> None:
         p = Path(path)
@@ -95,6 +108,8 @@ class Config:
     @classmethod
     def load(cls, path: str | Path) -> Config:
         d = json.loads(Path(path).read_text())
+        if d.get("wandb_api_key") == "<redacted>":
+            d["wandb_api_key"] = ""
         d["cameras"] = tuple(d.get("cameras", ("scene_image", "wrist_image")))
         d["holdout_combos"] = tuple(tuple(c) for c in d.get("holdout_combos", ()))
         return cls(**d)

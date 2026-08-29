@@ -16,11 +16,15 @@ set -euo pipefail
 
 REMOTE_USER=${REMOTE_USER:-bbouri}
 REMOTE_HOST=${REMOTE_HOST:-172.24.170.204}
-REMOTE_DIR=${REMOTE_DIR:-~/so-101-language-action-policy}
+REMOTE_DIR=${REMOTE_DIR:-/usr1/home/bbouri/SO-101}
 DATASET=${DATASET:-data/train_1200.hdf5}
 REMOTE="${REMOTE_USER}@${REMOTE_HOST}"
 
 echo "=== deploying to ${REMOTE}:${REMOTE_DIR} ==="
+
+# rsync does not create nested parent directories on the remote by itself, and
+# a missing parent fails late and confusingly. Create it up front.
+ssh "${REMOTE}" "mkdir -p '${REMOTE_DIR}/data' '${REMOTE_DIR}/logs'"
 
 # Code only. Excludes everything large or machine-specific: the venv, the
 # dataset, checkpoints, git history, and the vendored STL meshes (only needed
@@ -50,7 +54,7 @@ echo
 echo "=== done. next steps on the remote box ==="
 cat <<'NEXT'
   ssh bbouri@172.24.170.204
-  cd ~/so-101-language-action-policy
+  cd /usr1/home/bbouri/SO-101
   bash scripts/remote_setup.sh          # creates .venv, installs CUDA torch
   # then see docs/REMOTE_TRAINING.md for the training command
 NEXT

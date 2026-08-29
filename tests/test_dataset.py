@@ -2,6 +2,7 @@ import h5py
 import numpy as np
 import pytest
 
+from so101_sim._gl import rendering_available
 from so101_sim.episode_runner import EpisodeRunner
 from so101_sim.language import HashingTextEncoder
 from so101_sim.randomization import sample_episode
@@ -38,6 +39,14 @@ def test_writer_refuses_to_clobber_an_existing_dataset(tmp_path):
 
 @pytest.fixture(scope="module")
 def written(tmp_path_factory):
+    # Rendering needs a working GL context. A headless box without EGL can
+    # still train fine (training reads the HDF5 and never renders), so skip
+    # rather than fail -- but say exactly how to fix it.
+    if not rendering_available():
+        pytest.skip(
+            "no MuJoCo GL context (headless without EGL). "
+            "Try: export MUJOCO_GL=egl"
+        )
     runner = EpisodeRunner(image_size=(64, 80), render=True)
     ep = runner.run(sample_episode(2))
     runner.close()

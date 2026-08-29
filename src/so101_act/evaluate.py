@@ -35,18 +35,29 @@ def _move(batch, device):
 
 
 @torch.no_grad()
-def offline_metrics(model, loader: DataLoader, device, kl_weight: float,
+def offline_metrics(model, loader: DataLoader, device, kl_weight: float, norm,
                     max_batches: int | None = None) -> dict:
     """Masked L1 overall, per joint, per phase, and per chunk-horizon step.
 
-    All errors are computed in *normalized* action units so they are comparable
-    across joints; per-joint numbers are additionally reported in radians.
+    Units: `masked_l1` and `error_vs_horizon` average over all 6 joints, whose
+    normalized scales differ, so they are reported in *normalized* action units
+    only -- a single "radians" number mixing joints with different std would not
+    mean anything. `per_joint_mae` is reported in BOTH units: normalized (for
+    cross-joint comparability) and radians (`* norm.action_std`, for physical
+    interpretation), since that is the whole point of a per-joint breakdown.
+
+    Per-phase bucketing uses `phase_chunk[h]` -- the phase of the action being
+    PREDICTED at horizon `h` -- not the phase of the anchor observation at `t`.
+    A chunk started late in a short phase (`grasp` is ~35 of 444 steps) can run
+    into the next phase; bucketing by the anchor's phase would blend that
+    error into the wrong phase.
     """
     model.eval()
     n_j, n_p, n_h = len(JOINT_NAMES), len(PHASE_NAMES), model.chunk
+    std = np.asarray(norm.action_std, dtype=np.float64)
 
     sum_all = cnt_all = 0.0
-    sum_j = np.zeros(n_j); cnt_j = np.zeros(n_j)
+    sum_j = np.zeros(n_j); cnt_j = 0.0
     sum_h = np.zeros(n_h); cnt_h = np.zeros(n_h)
     sum_p = np.zeros(n_p); cnt_p = np.zeros(n_p)
     kl_sum = 0.0; n_batch = 0
@@ -57,32 +68,41 @@ def offline_metrics(model, loader: DataLoader, device, kl_weight: float,
         batch = _move(batch, device)
         out = model(batch)
         err = (out["actions"] - batch["action_chunk"]).abs()      # (B,k,6)
-        m = batch["action_chunk_mask"].unsqueeze(-1).to(err.dtype)
-        masked = err * m
+        m = batch["action_chunk_mask"].unsqueeze(-1).to(err.dtype)  # (B,k,1)
+        masked = err * m                                          # (B,k,6)
 
         sum_all += masked.sum().item(); cnt_all += (m.sum() * n_j).item()
         sum_j += masked.sum(dim=(0, 1)).cpu().numpy()
-        cnt_j += m.sum().item()   # same valid count for every joint
+        cnt_j += m.sum().item()   # same valid (batch,horizon) count for every joint
         sum_h += masked.sum(dim=(0, 2)).cpu().numpy()
         cnt_h += (m.squeeze(-1).sum(dim=0) * n_j).cpu().numpy()
 
-        ph = batch["phase"].cpu().numpy()
-        per_sample = masked.sum(dim=(1, 2)).cpu().numpy()
-        per_sample_cnt = (m.sum(dim=(1, 2)) * n_j).cpu().numpy()
+        # Per-target-phase: bucket each (sample, horizon) error by the phase of
+        # the action actually being predicted at that horizon step.
+        phase_chunk = batch["phase_chunk"].cpu().numpy()          # (B,k)
+        per_bh = masked.sum(dim=2).cpu().numpy()                  # (B,k) summed over joints
+        cnt_bh = (m.squeeze(-1) * n_j).cpu().numpy()               # (B,k)
         for p in range(n_p):
-            sel = ph == p
+            sel = phase_chunk == p
             if sel.any():
-                sum_p[p] += per_sample[sel].sum()
-                cnt_p[p] += per_sample_cnt[sel].sum()
+                sum_p[p] += per_bh[sel].sum()
+                cnt_p[p] += cnt_bh[sel].sum()
 
         kl_sum += act_loss(out, batch, kl_weight)["kl"].item()
         n_batch += 1
 
     def safe(s, c):
         return s / np.maximum(c, 1e-9)
+
+    per_joint_norm = safe(sum_j, cnt_j)
     return {
         "masked_l1": sum_all / max(cnt_all, 1e-9),
-        "per_joint_mae": {JOINT_NAMES[j]: float(safe(sum_j, cnt_j)[j]) for j in range(n_j)},
+        "per_joint_mae": {
+            JOINT_NAMES[j]: {
+                "normalized": float(per_joint_norm[j]),
+                "radians": float(per_joint_norm[j] * std[j]),
+            } for j in range(n_j)
+        },
         "per_phase_mae": {PHASE_NAMES[p]: (float(sum_p[p] / cnt_p[p]) if cnt_p[p] > 0 else None)
                           for p in range(n_p)},
         "error_vs_horizon": [float(x) for x in safe(sum_h, cnt_h)],

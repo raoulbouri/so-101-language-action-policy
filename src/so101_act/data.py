@@ -276,6 +276,16 @@ class SO101ACTDataset(Dataset):
             g["action_chunk_mask"][t].astype(np.bool_)
         )
         sample["phase"] = torch.tensor(int(g["phase"][t]), dtype=torch.long)
+        # Phase of each TARGET action in the chunk, not just the anchor at t.
+        # A 32-step chunk started late in a short phase (e.g. `grasp`, ~35
+        # steps total) can run well into the next phase, so per-phase error
+        # must be attributed to the phase of the action being predicted, not
+        # blended into whatever phase the observation happened to be in.
+        raw_phase = g["phase"][t : t + self.chunk_size]
+        if len(raw_phase) < self.chunk_size:
+            pad = np.full(self.chunk_size - len(raw_phase), raw_phase[-1], dtype=raw_phase.dtype)
+            raw_phase = np.concatenate([raw_phase, pad])
+        sample["phase_chunk"] = torch.from_numpy(raw_phase.astype(np.int64))
 
         # Language. Under shuffle (E3) the embedding comes from a *different*
         # episode while the observation stays put.

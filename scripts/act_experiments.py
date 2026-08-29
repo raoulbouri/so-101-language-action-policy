@@ -82,7 +82,7 @@ def main(argv=None) -> int:
         # --- offline (E1 / E2 / E5 depending on the run) -------------------
         _, test_loader = make_loader(cfg, episodes, splits["test"], norm)
         entry["offline_test"] = offline_metrics(
-            model, test_loader, device, cfg.kl_weight, a.max_batches)
+            model, test_loader, device, cfg.kl_weight, norm, a.max_batches)
         print(f"  masked L1 (test)          {entry['offline_test']['masked_l1']:.4f}")
 
         if cfg.use_language:
@@ -90,7 +90,7 @@ def main(argv=None) -> int:
             _, shuf_loader = make_loader(cfg, episodes, splits["test"], norm,
                                          shuffle_language=True)
             entry["E3_shuffled_language"] = offline_metrics(
-                model, shuf_loader, device, cfg.kl_weight, a.max_batches)
+                model, shuf_loader, device, cfg.kl_weight, norm, a.max_batches)
             d = entry["E3_shuffled_language"]["masked_l1"]
             base = entry["offline_test"]["masked_l1"]
             entry["E3_degradation"] = d - base

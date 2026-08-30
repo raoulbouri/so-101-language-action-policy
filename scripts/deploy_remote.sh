@@ -34,7 +34,10 @@ rsync -avz --progress \
   --exclude '.git/' \
   --exclude 'data/' \
   --exclude 'runs/' \
+  --exclude 'runs_remote/' \
   --exclude 'logs/' \
+  --exclude '*.hdf5' \
+  --exclude '*.pt' \
   --exclude '__pycache__/' \
   --exclude '.pytest_cache/' \
   --exclude '.ruff_cache/' \

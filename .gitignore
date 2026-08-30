@@ -33,3 +33,4 @@ logs/
 # ACT training runs: multi-hundred-MB checkpoints, fully reproducible from
 # config.json + norm_stats.json + splits.json + the dataset. Never commit.
 runs/
+runs_remote/

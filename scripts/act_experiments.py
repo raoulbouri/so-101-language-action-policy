@@ -14,6 +14,7 @@ import argparse
 import json
 from pathlib import Path
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
@@ -111,11 +112,12 @@ def main(argv=None) -> int:
             import h5py
 
             from so101_act.rollout import rollout_episode, summarize
+            sel = splits["test"][:a.rollouts]
             with h5py.File(cfg.hdf5_path, "r") as f:
                 emb = {episodes[i].name: f[episodes[i].name]["language_embedding"][:]
-                       for i in splits["test"][:a.rollouts]}
+                       for i in splits["test"]}
             rows = []
-            for i in splits["test"][:a.rollouts]:
+            for i in sel:
                 info = episodes[i]
                 rows.append(rollout_episode(
                     model, norm, device, info.seed,
@@ -124,6 +126,44 @@ def main(argv=None) -> int:
             entry["closed_loop_rows"] = rows
             print(f"  closed-loop success       "
                   f"{entry['closed_loop']['success_rate']:.1%} over {len(rows)}")
+
+            # --- wrong-language closed loop (the sharpest grounding test) ----
+            # Identical scene and seed, but the policy is told to fetch a
+            # DIFFERENT cube. A grounded policy should go elsewhere and fail
+            # the original success criterion; a language-blind one is unchanged.
+            if cfg.use_language and a.wrong_language_rollouts:
+                rng = np.random.default_rng(cfg.seed)
+                wrong_rows, changed = [], []
+                for i in sel[:a.wrong_language_rollouts]:
+                    info = episodes[i]
+                    alt = [j for j in splits["test"]
+                           if episodes[j].instruction != info.instruction]
+                    j = int(rng.choice(alt))
+                    r = rollout_episode(
+                        model, norm, device, info.seed,
+                        language_embedding=emb[episodes[j].name],
+                        task_id=episodes[j].task_id)
+                    r["given_instruction"] = episodes[j].instruction
+                    r["true_instruction"] = info.instruction
+                    wrong_rows.append(r)
+                base_by_seed = {x["seed"]: x for x in rows}
+                for r in wrong_rows:
+                    b = base_by_seed.get(r["seed"])
+                    if b:
+                        changed.append(abs(r["center_distance"] - b["center_distance"]))
+                entry["E4_closed_loop_wrong_language"] = {
+                    "n": len(wrong_rows),
+                    "success_rate_under_wrong_language":
+                        sum(r["success"] for r in wrong_rows) / max(len(wrong_rows), 1),
+                    "mean_abs_center_distance_change_m":
+                        float(np.mean(changed)) if changed else None,
+                    "rows": wrong_rows,
+                }
+                w = entry["E4_closed_loop_wrong_language"]
+                print(f"  wrong-language success    "
+                      f"{w['success_rate_under_wrong_language']:.1%} over {w['n']}"
+                      f"  | mean |Δcentre| "
+                      f"{1000*(w['mean_abs_center_distance_change_m'] or 0):.1f} mm")
 
         report["runs"][name] = entry
 

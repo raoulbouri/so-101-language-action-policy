@@ -1,7 +1,7 @@
 VENV ?= .venv
 PY   ?= $(VENV)/bin/python
 
-.PHONY: help setup test eval collect plan merge preview inspect verify replay viewer lint clean
+.PHONY: help setup test eval collect plan merge wandb-fetch preview inspect verify replay viewer lint clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -38,6 +38,10 @@ preview:  ## render one episode to mp4 (override SEED)
 
 inspect:  ## print the structure of a dataset (override OUT)
 	$(PY) scripts/inspect_dataset.py $(or $(OUT),data/so101_lang_act.hdf5)
+
+wandb-fetch:  ## pull training curves from wandb (needs WANDB_API_KEY)
+	$(PY) scripts/fetch_wandb.py --project $(or $(PROJECT),so101-act) \
+	  --group $(or $(GROUP),) --entity $(or $(ENTITY),)
 
 verify:  ## automated health checks on a dataset (reads disk, never re-simulates)
 	$(PY) scripts/verify_dataset.py $(or $(OUT),data/so101_lang_act.hdf5)

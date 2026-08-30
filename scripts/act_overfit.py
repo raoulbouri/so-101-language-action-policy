@@ -29,7 +29,10 @@ from so101_act.train import move, pick_device, set_seed
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--hdf5", default="data/train_1200.hdf5")
-    ap.add_argument("--conditioning", default="clip", choices=["none", "clip", "taskid"])
+    ap.add_argument("--conditioning", default="clip",
+                    choices=["none", "clip", "taskid", "film", "film_token"])
+    ap.add_argument("--chunk-size", type=int, default=None,
+                    help="override the ACT chunk length (default: Config value)")
     ap.add_argument("--steps", type=int, default=300)
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--n-timesteps", type=int, default=8)
@@ -39,7 +42,8 @@ def main() -> int:
     args = ap.parse_args()
 
     cfg = Config(hdf5_path=args.hdf5, conditioning=args.conditioning,
-                 batch_size=args.batch_size, lr=args.lr)
+                 batch_size=args.batch_size, lr=args.lr,
+                 **({"chunk_size": args.chunk_size} if args.chunk_size else {}))
     set_seed(cfg.seed)
     device = pick_device()
 
@@ -47,8 +51,10 @@ def main() -> int:
     splits = make_splits(episodes, seed=cfg.seed)
     norm = compute_normalizer(cfg.hdf5_path, episodes, splits["train"], max_episodes=40)
 
+    # chunk_size MUST come from the config: a dataset built at a different k
+    # than the model fails deep inside the CVAE positional embedding.
     ds = SO101ACTDataset(cfg.hdf5_path, episodes, splits["train"][:1], norm,
-                         conditioning=cfg.conditioning)
+                         chunk_size=cfg.chunk_size, conditioning=cfg.conditioning)
     # A fixed handful of timesteps from ONE episode.
     fixed = collate([ds[i] for i in range(0, args.n_timesteps * 20, 20)])
     fixed = move(fixed, device)

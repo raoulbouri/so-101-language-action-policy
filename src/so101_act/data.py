@@ -32,6 +32,11 @@ IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 _INSTR_RE = re.compile(r"take the (\w+) cube and place it in the (\w+) circle")
 
+# Kept in lockstep with Config.chunk_size. A dataset built with a different k
+# than the model silently produces a shape mismatch deep inside the CVAE, so the
+# two defaults must never drift apart. See ISSUE-011.
+DEFAULT_CHUNK_SIZE = 100
+
 
 def parse_instruction(text: str) -> tuple[str, str]:
     """('take the red cube and place it in the green circle') -> ('red','green')."""
@@ -215,7 +220,7 @@ class SO101ACTDataset(Dataset):
         indices: list[int],
         normalizer: Normalizer,
         *,
-        chunk_size: int = 32,
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
         cameras: tuple[str, ...] = ("scene_image", "wrist_image"),
         conditioning: str = "none",
         shuffle_language: bool = False,
@@ -252,6 +257,27 @@ class SO101ACTDataset(Dataset):
             self._f = h5py.File(self.hdf5_path, "r")
         return self._f
 
+    def _action_chunk(self, g, t: int) -> tuple[np.ndarray, np.ndarray]:
+        """`action[t : t+k]`, tail-padded by repeating the final action.
+
+        Padding repeats rather than zero-fills so padded targets stay on the
+        action manifold, and the mask marks them invalid so they contribute
+        exactly zero loss. Identical semantics to the stored `action_chunk`,
+        just not limited to k=32.
+        """
+        k = self.chunk_size
+        T = g["action"].shape[0]
+        end = min(t + k, T)
+        real = g["action"][t:end].astype(np.float32)
+        n_real = real.shape[0]
+        chunk = np.empty((k, real.shape[1]), dtype=np.float32)
+        chunk[:n_real] = real
+        if n_real < k:
+            chunk[n_real:] = real[-1]
+        mask = np.zeros(k, dtype=np.bool_)
+        mask[:n_real] = True
+        return chunk, mask
+
     def _image(self, g, cam: str, t: int) -> np.ndarray:
         img = g[f"obs/{cam}"][t].astype(np.float32) / 255.0     # (H,W,3)
         img = (img - IMAGENET_MEAN) / IMAGENET_STD
@@ -269,12 +295,15 @@ class SO101ACTDataset(Dataset):
         sample["qpos"] = torch.from_numpy(
             self.norm.norm_qpos(g["obs/qpos"][t].astype(np.float32))
         )
-        sample["action_chunk"] = torch.from_numpy(
-            self.norm.norm_action(g["action_chunk"][t].astype(np.float32))
-        )
-        sample["action_chunk_mask"] = torch.from_numpy(
-            g["action_chunk_mask"][t].astype(np.bool_)
-        )
+        # Chunks are sliced from the full `action` array rather than read from
+        # the stored `action_chunk`, which is baked at k=32. ACT and LeRobot
+        # both default to k=100; at 50 Hz that is 2 s of lookahead versus 0.64 s,
+        # and long chunks are the entire mechanism by which ACT suppresses
+        # compounding error. Slicing here decouples k from the dataset so it can
+        # be changed without re-collecting. See ISSUE-008.
+        chunk, mask = self._action_chunk(g, t)
+        sample["action_chunk"] = torch.from_numpy(self.norm.norm_action(chunk))
+        sample["action_chunk_mask"] = torch.from_numpy(mask)
         sample["phase"] = torch.tensor(int(g["phase"][t]), dtype=torch.long)
         # Phase of each TARGET action in the chunk, not just the anchor at t.
         # A 32-step chunk started late in a short phase (e.g. `grasp`, ~35

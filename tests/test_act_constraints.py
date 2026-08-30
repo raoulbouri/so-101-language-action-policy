@@ -75,7 +75,8 @@ def test_clip_is_frozen_only_the_projection_learns():
 def test_action_decoder_is_parallel_not_autoregressive():
     """ACT predicts the whole chunk in one shot from k learned queries."""
     m = build_model(_cfg())
-    assert m.query_emb.num_embeddings == m.chunk == 32
+    # One learned query per chunk step, produced in a single forward pass.
+    assert m.query_emb.num_embeddings == m.chunk == m.cfg.chunk_size
     src = inspect.getsource(model_mod.ACT.forward)
     for tok in ("for h in", "while", "causal", "tgt_mask"):
         assert tok not in src, f"decoder looks autoregressive ({tok})"

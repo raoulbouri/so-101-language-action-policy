@@ -121,7 +121,9 @@ def main(argv=None) -> int:
                 info = episodes[i]
                 rows.append(rollout_episode(
                     model, norm, device, info.seed,
-                    language_embedding=emb[info.name], task_id=info.task_id))
+                    language_embedding=emb[info.name], task_id=info.task_id,
+                    use_ensembling=cfg.use_ensembling,
+                    n_action_steps=cfg.n_action_steps))
             entry["closed_loop"] = summarize(rows)
             entry["closed_loop_rows"] = rows
             print(f"  closed-loop success       "
@@ -142,7 +144,9 @@ def main(argv=None) -> int:
                     r = rollout_episode(
                         model, norm, device, info.seed,
                         language_embedding=emb[episodes[j].name],
-                        task_id=episodes[j].task_id)
+                        task_id=episodes[j].task_id,
+                        use_ensembling=cfg.use_ensembling,
+                        n_action_steps=cfg.n_action_steps)
                     r["given_instruction"] = episodes[j].instruction
                     r["true_instruction"] = info.instruction
                     wrong_rows.append(r)

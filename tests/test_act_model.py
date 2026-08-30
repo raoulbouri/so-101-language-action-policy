@@ -6,7 +6,11 @@ import torch
 from so101_act.config import Config
 from so101_act.model import act_loss, build_model
 
-B, K, A = 3, 32, 6
+B, A = 3, 6
+# Chunk length used by these tests. Kept small for speed and derived from the
+# config below, so a change to the ACT default (32 -> 100) cannot silently
+# desynchronise the fixtures from the model.
+K = 16
 
 
 def make_cfg(conditioning="none", **kw):
@@ -14,7 +18,8 @@ def make_cfg(conditioning="none", **kw):
     # pretrained download would make them slow and network-dependent.
     return Config(conditioning=conditioning, pretrained_backbone=False,
                   hidden_dim=64, dim_feedforward=128, nheads=4,
-                  enc_layers=1, dec_layers=1, cvae_enc_layers=1, **kw)
+                  enc_layers=1, dec_layers=1, cvae_enc_layers=1,
+                  chunk_size=K, **kw)
 
 
 def make_batch(seed=0, mask_tail=None):

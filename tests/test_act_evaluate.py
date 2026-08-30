@@ -30,11 +30,13 @@ def setup():
     eps, _ = scan_episodes(HDF5)
     sp = make_splits(eps, seed=0)
     norm = compute_normalizer(HDF5, eps, sp["train"], max_episodes=20)
-    ds = SO101ACTDataset(HDF5, eps, sp["val"][:2], norm, conditioning="clip")
+    cfg_chunk = 16   # small for speed; dataset and model must agree
+    ds = SO101ACTDataset(HDF5, eps, sp["val"][:2], norm, chunk_size=cfg_chunk,
+                         conditioning="clip")
     loader = DataLoader(ds, batch_size=16, shuffle=False, collate_fn=collate)
     cfg = Config(conditioning="clip", pretrained_backbone=False, hidden_dim=64,
                 dim_feedforward=128, nheads=4, enc_layers=1, dec_layers=1,
-                cvae_enc_layers=1)
+                cvae_enc_layers=1, chunk_size=cfg_chunk)
     model = build_model(cfg)
     return eps, sp, norm, ds, loader, model, cfg
 

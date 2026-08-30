@@ -35,7 +35,15 @@ from .data import IMAGENET_MEAN, IMAGENET_STD
 
 
 class TemporalEnsembler:
-    """ACT's exponentially-weighted average over overlapping action chunks."""
+    """ACT's exponentially-weighted average over overlapping action chunks.
+
+    The ACT paper defines the weights as ``w_i = exp(-m * i)`` where **``w_0`` is
+    the weight of the OLDEST action** in the buffer, and smaller ``m`` means new
+    observations are incorporated faster. An earlier version of this class had
+    the ordering inverted -- it weighted the *newest* prediction highest -- which
+    measurably degraded rollout (divergence at t=40 was 0.410 with ensembling
+    against 0.259 when replanning every step). See ISSUE-007.
+    """
 
     def __init__(self, chunk: int, action_dim: int, m: float = 0.01):
         self.chunk = chunk
@@ -49,15 +57,16 @@ class TemporalEnsembler:
             self.buf.popleft()
 
     def action_for(self, t: int) -> np.ndarray:
-        preds, weights = [], []
+        # Buffer is append-ordered, so iterating it yields oldest -> newest.
+        preds = []
         for t0, ch in self.buf:
             h = t - t0
             if 0 <= h < self.chunk:
                 preds.append(ch[h])
-                weights.append(np.exp(-self.m * h))
         if not preds:
             return np.zeros(self.action_dim, dtype=np.float32)
-        w = np.asarray(weights, dtype=np.float64)
+        # i = 0 is the oldest surviving prediction, per the paper.
+        w = np.exp(-self.m * np.arange(len(preds), dtype=np.float64))
         w /= w.sum()
         return (np.asarray(preds, dtype=np.float64) * w[:, None]).sum(0).astype(np.float32)
 
@@ -78,6 +87,8 @@ def rollout_episode(
     settle_seconds: float = 0.6,
     control_hz: float = 50.0,
     ensemble_m: float = 0.01,
+    use_ensembling: bool = False,
+    n_action_steps: int | None = None,
     renderer=None,
 ) -> dict:
     """Run one closed-loop episode. `language_embedding` overrides the episode's
@@ -105,7 +116,13 @@ def rollout_episode(
     tid = (torch.tensor([task_id], device=device)
            if task_id is not None else torch.zeros(1, dtype=torch.long, device=device))
 
-    ens = TemporalEnsembler(model.chunk, 6, m=ensemble_m)
+    # LeRobot's ACTConfig sets temporal_ensemble_coeff = None, i.e. ensembling is
+    # OFF by default and the chunk is executed open-loop for n_action_steps
+    # before replanning. Our own rollout measurements agreed: ensembling was
+    # worse than every alternative. See ISSUE-009.
+    ens = TemporalEnsembler(model.chunk, 6, m=ensemble_m) if use_ensembling else None
+    n_exec = n_action_steps or model.chunk
+    pending: np.ndarray | None = None
     model.eval()
     try:
         for t in range(max_steps):
@@ -122,9 +139,17 @@ def rollout_episode(
                 "language_embedding": lang,
                 "task_id": tid,
             }
-            chunk = model(batch)["actions"][0].cpu().numpy()
-            ens.add(t, norm.denorm_action(chunk))
-            data.ctrl[:] = ens.action_for(t)
+            if ens is not None:
+                chunk = norm.denorm_action(model(batch)["actions"][0].cpu().numpy())
+                ens.add(t, chunk)
+                action = ens.action_for(t)
+            else:
+                # Replan every n_exec steps, execute the chunk open-loop between.
+                if pending is None or t % n_exec == 0:
+                    pending = norm.denorm_action(
+                        model(batch)["actions"][0].cpu().numpy())
+                action = pending[t % n_exec]
+            data.ctrl[:] = action
             for _ in range(PHYSICS_SUBSTEPS):
                 mujoco.mj_step(scene, data)
     finally:

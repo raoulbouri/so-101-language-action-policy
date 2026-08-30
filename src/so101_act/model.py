@@ -56,6 +56,35 @@ def sine_positional_2d(h: int, w: int, dim: int, device=None) -> Tensor:
     return torch.cat([enc(y), enc(x)], dim=1)          # (h*w, dim)
 
 
+class FiLM(nn.Module):
+    """Feature-wise Linear Modulation: ``h <- gamma(L) * h + beta(L)``.
+
+    Channel-wise affine modulation of a conv feature map, conditioned on the
+    language embedding. RT-1 conditions its visual backbone this way and
+    outperforms BC-Z -- which appends language as a token, our `clip` mode --
+    by 25% on seen tasks: early fusion lets the encoder extract task-relevant
+    features rather than leaving language as one token among 35 that
+    self-attention can learn to drop.
+
+    Identity initialisation: gamma = 1 + W_g c and beta = W_b c with W_g, W_b
+    zero-initialised, so at step 0 the layer is exactly the identity. This
+    preserves the ImageNet pretraining intact and makes a FiLM run start
+    numerically identical to the un-modulated baseline.
+    """
+
+    def __init__(self, cond_dim: int, channels: int):
+        super().__init__()
+        self.to_gamma_beta = nn.Linear(cond_dim, 2 * channels)
+        nn.init.zeros_(self.to_gamma_beta.weight)
+        nn.init.zeros_(self.to_gamma_beta.bias)
+        self.channels = channels
+
+    def forward(self, h: Tensor, cond: Tensor) -> Tensor:
+        d_gamma, beta = self.to_gamma_beta(cond).chunk(2, dim=-1)
+        gamma = 1.0 + d_gamma                       # identity at init
+        return h * gamma[:, :, None, None] + beta[:, :, None, None]
+
+
 class VisualBackbone(nn.Module):
     """ResNet18 truncated after layer4, projected to `hidden_dim`.
 
@@ -63,18 +92,41 @@ class VisualBackbone(nn.Module):
     **16 tokens per camera**.
     """
 
-    def __init__(self, hidden_dim: int, name: str = "resnet18", pretrained: bool = True):
+    def __init__(self, hidden_dim: int, name: str = "resnet18", pretrained: bool = True,
+                 film_cond_dim: int | None = None):
         super().__init__()
         weights = "IMAGENET1K_V1" if pretrained else None
         net = getattr(torchvision.models, name)(weights=weights)
-        self.body = nn.Sequential(*list(net.children())[:-2])   # drop avgpool + fc
+        # Keep the stages addressable so FiLM can be applied between them.
+        self.stem = nn.Sequential(net.conv1, net.bn1, net.relu, net.maxpool)
+        self.layer1, self.layer2 = net.layer1, net.layer2
+        self.layer3, self.layer4 = net.layer3, net.layer4
         self.out_channels = 512 if name in ("resnet18", "resnet34") else 2048
         self.proj = nn.Conv2d(self.out_channels, hidden_dim, kernel_size=1)
 
-    def forward(self, x: Tensor) -> tuple[Tensor, int, int]:
-        f = self.proj(self.body(x))                  # (B, D, h, w)
-        h, w = f.shape[2], f.shape[3]
-        return f.flatten(2).permute(0, 2, 1), h, w   # (B, h*w, D)
+        self.use_film = film_cond_dim is not None
+        if self.use_film:
+            ch2 = self.layer2[-1].conv2.out_channels
+            ch3 = self.layer3[-1].conv2.out_channels
+            ch4 = self.layer4[-1].conv2.out_channels
+            self.film2 = FiLM(film_cond_dim, ch2)
+            self.film3 = FiLM(film_cond_dim, ch3)
+            self.film4 = FiLM(film_cond_dim, ch4)
+
+    def forward(self, x: Tensor, cond: Tensor | None = None) -> tuple[Tensor, int, int]:
+        h = self.layer1(self.stem(x))
+        h = self.layer2(h)
+        if self.use_film:
+            h = self.film2(h, cond)
+        h = self.layer3(h)
+        if self.use_film:
+            h = self.film3(h, cond)
+        h = self.layer4(h)
+        if self.use_film:
+            h = self.film4(h, cond)
+        f = self.proj(h)                             # (B, D, h, w)
+        hh, ww = f.shape[2], f.shape[3]
+        return f.flatten(2).permute(0, 2, 1), hh, ww  # (B, h*w, D)
 
 
 class CVAEEncoder(nn.Module):
@@ -122,13 +174,20 @@ class ACT(nn.Module):
         self.state_dim = 6
         self.cameras = tuple(cfg.cameras)
 
+        # --- conditioning mode ---------------------------------------------
+        self.use_film = cfg.conditioning in ("film", "film_token")
+        # `film` puts language ONLY in the backbone; `film_token` also keeps the
+        # token, so the two paths can be attributed separately.
+        self.use_lang_token = cfg.conditioning in ("clip", "taskid", "film_token")
+
         # --- visual -------------------------------------------------------
+        film_dim = d if self.use_film else None
         if cfg.share_backbone:
-            shared = VisualBackbone(d, cfg.backbone, cfg.pretrained_backbone)
+            shared = VisualBackbone(d, cfg.backbone, cfg.pretrained_backbone, film_dim)
             self.backbones = nn.ModuleDict({c: shared for c in self.cameras})
         else:
             self.backbones = nn.ModuleDict(
-                {c: VisualBackbone(d, cfg.backbone, cfg.pretrained_backbone)
+                {c: VisualBackbone(d, cfg.backbone, cfg.pretrained_backbone, film_dim)
                  for c in self.cameras}
             )
 
@@ -138,7 +197,7 @@ class ACT(nn.Module):
         self.modality_emb = nn.Embedding(N_MODALITIES, d)
 
         self.use_language = cfg.use_language
-        if cfg.conditioning == "clip":
+        if cfg.conditioning in ("clip", "film", "film_token"):
             # Frozen CLIP vector -> one token. LayerNorm first because CLIP
             # embeddings are L2-normalised and therefore small in magnitude
             # relative to the other token streams.
@@ -194,15 +253,19 @@ class ACT(nn.Module):
             self.latent_proj(z).unsqueeze(1) + self._mod(MOD_LATENT, b, 1, device),
             self.state_proj(batch["qpos"]).unsqueeze(1) + self._mod(MOD_STATE, b, 1, device),
         ]
+        lang = None
         if self.use_language:
-            if self.cfg.conditioning == "clip":
-                lang = self.lang_proj(batch["language_embedding"])
-            else:
+            if self.cfg.conditioning == "taskid":
                 lang = self.lang_proj(self.task_emb(batch["task_id"]))
-            tokens.append(lang.unsqueeze(1) + self._mod(MOD_LANG, b, 1, device))
+            else:
+                lang = self.lang_proj(batch["language_embedding"])
+            if self.use_lang_token:
+                tokens.append(lang.unsqueeze(1) + self._mod(MOD_LANG, b, 1, device))
 
         for cam, mid in zip(self.cameras, (MOD_SCENE, MOD_WRIST)):
-            feat, h, w = self.backbones[cam](batch[cam])          # (B, h*w, D)
+            # FiLM modulates the backbone itself; language is then not optional.
+            feat, h, w = (self.backbones[cam](batch[cam], lang) if self.use_film
+                          else self.backbones[cam](batch[cam]))   # (B, h*w, D)
             feat = feat + self._visual_pos(h, w, device) + self._mod(mid, b, feat.shape[1], device)
             tokens.append(feat)
         return torch.cat(tokens, dim=1)

@@ -18,7 +18,10 @@ from typing import Any, Literal
 #   none    -- E1 baseline, pi(A | I, q, z)
 #   clip    -- E2, pi(A | I, q, L, z) with frozen CLIP embedding
 #   taskid  -- E6, same architecture but L is a learned embedding of the task id
-Conditioning = Literal["none", "clip", "taskid"]
+#   film    -- Tier 1, CLIP modulates the visual backbone via FiLM (RT-1 style),
+#              with NO language token
+#   film_token -- both FiLM and the language token
+Conditioning = Literal["none", "clip", "taskid", "film", "film_token"]
 
 # Split modes:
 #   iid           -- random episode-level split
@@ -30,7 +33,19 @@ SplitMode = Literal["iid", "compositional"]
 class Config:
     # ---- data -------------------------------------------------------------
     hdf5_path: str = "data/train_1200.hdf5"
-    chunk_size: int = 32                 # ACT's action-chunk length k
+    # ACT and LeRobot both default to chunk_size = n_action_steps = 100. At
+    # 50 Hz that is 2 s of lookahead (matching ALOHA) versus 0.64 s at k=32.
+    # Long chunks are ACT's mechanism for suppressing compounding error, so a
+    # smaller k gives away the method's main benefit. Chunks are sliced from the
+    # dataset's `action` array, so k is not limited by the stored action_chunk.
+    chunk_size: int = 100                # ACT's action-chunk length k
+    # Actions executed open-loop before replanning. LeRobot sets this equal to
+    # chunk_size; None means "use chunk_size".
+    n_action_steps: int | None = None
+    # LeRobot's temporal_ensemble_coeff defaults to None (ensembling OFF).
+    # Measured here: ensembling was worse than every alternative. See ISSUE-009.
+    use_ensembling: bool = False
+    ensemble_m: float = 0.01
     image_size: int = 128
     cameras: tuple[str, ...] = ("scene_image", "wrist_image")
 

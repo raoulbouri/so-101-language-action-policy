@@ -52,8 +52,11 @@ def test_inference_uses_zero_latent_not_a_sample():
         "qpos": torch.randn(2, 6),
         "language_embedding": torch.nn.functional.normalize(torch.randn(2, 512), dim=1),
         "task_id": torch.zeros(2, dtype=torch.long),
-        "action_chunk": torch.randn(2, 32, 6),
-        "action_chunk_mask": torch.ones(2, 32, dtype=torch.bool),
+        # Derived from the config, not a literal. This currently passes with a
+        # literal only because eval mode skips the CVAE entirely -- it would
+        # break the moment the test ran in train mode.
+        "action_chunk": torch.randn(2, m.cfg.chunk_size, 6),
+        "action_chunk_mask": torch.ones(2, m.cfg.chunk_size, dtype=torch.bool),
     }
     with torch.no_grad():
         out = m(batch)

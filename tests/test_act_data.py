@@ -94,14 +94,18 @@ def test_normalizer_roundtrip(prepared):
 
 def test_batch_shapes_match_the_contract(prepared):
     eps, sp, norm = prepared
+    # k comes from the dataset, not a literal: the ACT default moved 32 -> 100
+    # and a hardcoded shape here would fail for a reason unrelated to the
+    # contract being tested. See ISSUE-011.
     ds = SO101ACTDataset(HDF5, eps, sp["train"][:4], norm, conditioning="clip")
+    k = ds.chunk_size
     batch = collate([ds[i] for i in range(6)])
     assert batch["scene_image"].shape == (6, 3, 128, 128)
     assert batch["wrist_image"].shape == (6, 3, 128, 128)
     assert batch["qpos"].shape == (6, 6)
     assert batch["language_embedding"].shape == (6, 512)
-    assert batch["action_chunk"].shape == (6, 32, 6)
-    assert batch["action_chunk_mask"].shape == (6, 32)
+    assert batch["action_chunk"].shape == (6, k, 6)
+    assert batch["action_chunk_mask"].shape == (6, k)
     assert batch["phase"].shape == (6,)
     assert batch["action_chunk_mask"].dtype == torch.bool
     assert isinstance(batch["instruction"], list) and len(batch["instruction"]) == 6
@@ -129,11 +133,12 @@ def test_actions_are_not_shifted_relative_to_observations(prepared):
 def test_mask_marks_exactly_the_valid_tail(prepared):
     eps, sp, norm = prepared
     ds = SO101ACTDataset(HDF5, eps, sp["train"][:1], norm)
+    k = ds.chunk_size
     T = eps[sp["train"][0]].length
     for t in (0, T // 2, T - 1, T - 5):
         s = ds[t]
-        expected = min(32, T - t)
-        assert int(s["action_chunk_mask"].sum()) == expected, f"t={t}"
+        expected = min(k, T - t)
+        assert int(s["action_chunk_mask"].sum()) == expected, f"t={t} k={k}"
 
 
 def test_language_shuffle_changes_the_embedding_not_the_observation(prepared):

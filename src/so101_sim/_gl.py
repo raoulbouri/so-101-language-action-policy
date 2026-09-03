@@ -29,10 +29,16 @@ def select_backend() -> str:
     if platform.system() == "Darwin":
         return "default (macOS CGL)"
 
-    # Headless Linux: no DISPLAY and no Wayland session means GLFW cannot work.
-    if platform.system() == "Linux" and not (
-        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
-    ):
+    # Linux: always prefer EGL.
+    #
+    # An earlier version only chose EGL when DISPLAY was unset. That is wrong:
+    # sshing with X11 forwarding SETS DISPLAY without providing a usable X
+    # server, so GLFW was selected and every render failed -- and whether it
+    # failed depended on how you happened to connect, which made it flaky
+    # rather than merely broken. EGL renders on the GPU and works both headless
+    # and with a display, so it is the right default on any Linux GPU box.
+    # An explicit MUJOCO_GL still wins (see above) for the CPU-only osmesa case.
+    if platform.system() == "Linux":
         os.environ["MUJOCO_GL"] = "egl"
         return "egl"
 

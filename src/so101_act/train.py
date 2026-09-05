@@ -118,7 +118,8 @@ class Trainer:
         )
         # Normalization from TRAIN episodes only.
         self.norm = compute_normalizer(
-            cfg.hdf5_path, self.episodes, self.splits["train"], seed=cfg.seed
+            cfg.hdf5_path, self.episodes, self.splits["train"], seed=cfg.seed,
+            chunk_size=cfg.chunk_size if cfg.action_repr == "delta" else None,
         )
 
         self.model = build_model(cfg).to(self.device)
@@ -170,7 +171,7 @@ class Trainer:
             self.cfg.hdf5_path, self.episodes, idx, self.norm,
             chunk_size=self.cfg.chunk_size, cameras=self.cfg.cameras,
             conditioning=self.cfg.conditioning, shuffle_language=shuffle_language,
-            language_seed=self.cfg.seed,
+            language_seed=self.cfg.seed, action_repr=self.cfg.action_repr,
         )
         return DataLoader(
             ds, batch_size=batch_size or self.cfg.batch_size, shuffle=shuffle,

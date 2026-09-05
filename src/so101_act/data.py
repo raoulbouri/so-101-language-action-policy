@@ -54,6 +54,15 @@ class Normalizer:
     qpos_std: np.ndarray
     action_mean: np.ndarray
     action_std: np.ndarray
+    # Per-horizon delta statistics, shape (k, 6), for action_repr="delta".
+    # Per-HORIZON rather than pooled because the delta's spread grows with the
+    # horizon (1.41 deg at h=0 to 14.71 deg at h=31 on this dataset). A single
+    # pooled scale would leave the near-term action -- the one that actually
+    # gets executed -- occupying a small fraction of the target range, which is
+    # the failure ISSUE-017 describes. Normalising per horizon makes "predict
+    # zero delta" cost a roughly constant 0.53-0.61 normalised L1 at every h.
+    delta_mean: np.ndarray | None = None
+    delta_std: np.ndarray | None = None
 
     def norm_qpos(self, q):
         return (q - self.qpos_mean) / self.qpos_std
@@ -69,8 +78,45 @@ class Normalizer:
             return a * std + mean
         return a * self.action_std + self.action_mean
 
+    def has_delta(self) -> bool:
+        return self.delta_mean is not None and self.delta_std is not None
+
+    def _require_delta(self):
+        if not self.has_delta():
+            raise ValueError(
+                "This Normalizer carries no delta statistics. It was built for "
+                "action_repr='absolute'; rebuild it with chunk_size set to use "
+                "action_repr='delta'."
+            )
+
+    def norm_delta(self, d):
+        """d: (k, 6) raw deltas action[t+h] - qpos[t] -> normalised."""
+        self._require_delta()
+        return (d - self.delta_mean) / self.delta_std
+
+    def denorm_delta(self, d):
+        """Network output -> raw deltas. Add qpos[t] to get joint targets."""
+        self._require_delta()
+        if isinstance(d, torch.Tensor):
+            mean = torch.as_tensor(self.delta_mean, dtype=d.dtype, device=d.device)
+            std = torch.as_tensor(self.delta_std, dtype=d.dtype, device=d.device)
+            return d * std + mean
+        return d * self.delta_std + self.delta_mean
+
+    def denorm_chunk(self, pred, qpos_raw, action_repr: str):
+        """Network output -> absolute joint targets, whichever representation.
+
+        `pred` is (k, 6) as emitted by the model; `qpos_raw` is the UNNORMALISED
+        observed joint vector at the anchor timestep. Keeping both branches here
+        means rollout and evaluation cannot disagree about the inverse.
+        """
+        if action_repr == "delta":
+            return self.denorm_delta(pred) + np.asarray(qpos_raw, dtype=np.float32)
+        return self.denorm_action(pred)
+
     def to_dict(self) -> dict[str, list[float]]:
-        return {k: np.asarray(v).tolist() for k, v in self.__dict__.items()}
+        return {k: np.asarray(v).tolist()
+                for k, v in self.__dict__.items() if v is not None}
 
     def save(self, path: str | Path) -> None:
         p = Path(path)
@@ -81,6 +127,17 @@ class Normalizer:
     def load(cls, path: str | Path) -> Normalizer:
         d = json.loads(Path(path).read_text())
         return cls(**{k: np.asarray(v, dtype=np.float32) for k, v in d.items()})
+
+    def __eq__(self, other) -> bool:      # dataclass eq breaks on ndarray
+        if not isinstance(other, Normalizer):
+            return NotImplemented
+        for k, v in self.__dict__.items():
+            w = getattr(other, k)
+            if (v is None) != (w is None):
+                return False
+            if v is not None and not np.allclose(v, w):
+                return False
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +230,7 @@ def compute_normalizer(
     *,
     max_episodes: int = 400,
     seed: int = 0,
+    chunk_size: int | None = None,
 ) -> Normalizer:
     """Standardisation statistics from TRAINING episodes only.
 
@@ -193,12 +251,36 @@ def compute_normalizer(
     q = np.concatenate(qs).astype(np.float64)
     a = np.concatenate(as_).astype(np.float64)
 
+    delta_mean = delta_std = None
+    if chunk_size is not None:
+        # Per-horizon delta statistics via running sums: materialising every
+        # (t, h) pair is ~18M rows at k=100 across 400 episodes.
+        n = np.zeros(chunk_size)
+        s1 = np.zeros((chunk_size, a.shape[1]))
+        s2 = np.zeros((chunk_size, a.shape[1]))
+        for qe, ae in zip(qs, as_):
+            qe = qe.astype(np.float64); ae = ae.astype(np.float64)
+            T = len(ae)
+            for h in range(chunk_size):
+                if T - h <= 0:
+                    break
+                # Only real pairs; the padded tail of a chunk is masked out of
+                # the loss, so it must not shape the statistics either.
+                d = ae[h:] - qe[: T - h]
+                n[h] += len(d); s1[h] += d.sum(0); s2[h] += (d ** 2).sum(0)
+        n = np.maximum(n, 1)[:, None]
+        delta_mean = (s1 / n).astype(np.float32)
+        var = np.maximum(s2 / n - (s1 / n) ** 2, 0.0)
+        delta_std = np.maximum(np.sqrt(var), 1e-3).astype(np.float32)
+
     # Floor the std so a near-constant joint cannot blow up into huge values.
     return Normalizer(
         qpos_mean=q.mean(0).astype(np.float32),
         qpos_std=np.maximum(q.std(0), 1e-3).astype(np.float32),
         action_mean=a.mean(0).astype(np.float32),
         action_std=np.maximum(a.std(0), 1e-3).astype(np.float32),
+        delta_mean=delta_mean,
+        delta_std=delta_std,
     )
 
 
@@ -225,6 +307,7 @@ class SO101ACTDataset(Dataset):
         conditioning: str = "none",
         shuffle_language: bool = False,
         language_seed: int = 0,
+        action_repr: str = "absolute",
     ):
         self.hdf5_path = str(hdf5_path)
         self.episodes = episodes
@@ -233,6 +316,14 @@ class SO101ACTDataset(Dataset):
         self.chunk_size = chunk_size
         self.cameras = tuple(cameras)
         self.conditioning = conditioning
+        self.action_repr = action_repr
+        if action_repr == "delta":
+            normalizer._require_delta()
+            if normalizer.delta_std.shape[0] < chunk_size:
+                raise ValueError(
+                    f"delta stats cover {normalizer.delta_std.shape[0]} horizons "
+                    f"but chunk_size is {chunk_size}"
+                )
         self.shuffle_language = shuffle_language
         self._f: h5py.File | None = None
 
@@ -292,9 +383,10 @@ class SO101ACTDataset(Dataset):
         sample: dict = {
             cam: torch.from_numpy(self._image(g, cam, t)) for cam in self.cameras
         }
-        sample["qpos"] = torch.from_numpy(
-            self.norm.norm_qpos(g["obs/qpos"][t].astype(np.float32))
-        )
+        qpos_raw = g["obs/qpos"][t].astype(np.float32)
+        sample["qpos"] = torch.from_numpy(self.norm.norm_qpos(qpos_raw))
+        # The rollout needs the unnormalised anchor to invert a delta chunk.
+        sample["qpos_raw"] = torch.from_numpy(qpos_raw)
         # Chunks are sliced from the full `action` array rather than read from
         # the stored `action_chunk`, which is baked at k=32. ACT and LeRobot
         # both default to k=100; at 50 Hz that is 2 s of lookahead versus 0.64 s,
@@ -302,7 +394,13 @@ class SO101ACTDataset(Dataset):
         # compounding error. Slicing here decouples k from the dataset so it can
         # be changed without re-collecting. See ISSUE-008.
         chunk, mask = self._action_chunk(g, t)
-        sample["action_chunk"] = torch.from_numpy(self.norm.norm_action(chunk))
+        if self.action_repr == "delta":
+            # Target is where to GO relative to where we ARE, not an absolute
+            # pose that is already ~96% given by the observation. See ISSUE-017.
+            tgt = self.norm.norm_delta(chunk - qpos_raw[None, :])
+        else:
+            tgt = self.norm.norm_action(chunk)
+        sample["action_chunk"] = torch.from_numpy(tgt.astype(np.float32))
         sample["action_chunk_mask"] = torch.from_numpy(mask)
         sample["phase"] = torch.tensor(int(g["phase"][t]), dtype=torch.long)
         # Phase of each TARGET action in the chunk, not just the anchor at t.

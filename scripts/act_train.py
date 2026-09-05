@@ -30,6 +30,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--kl-weight", type=float, default=10.0)
     p.add_argument("--chunk-size", type=int, default=100,
                    help="ACT action-chunk length k (ACT/LeRobot default 100)")
+    p.add_argument("--action-repr", default="absolute", choices=["absolute", "delta"],
+                   help="'delta' predicts action[t+h]-qpos[t]. Use this: with "
+                        "'absolute' the target is ~96%% given by the observation "
+                        "and the policy learns to hold position (ISSUE-017).")
     p.add_argument("--use-ensembling", action="store_true",
                    help="enable temporal ensembling (LeRobot defaults it OFF)")
     p.add_argument("--num-workers", type=int, default=4)
@@ -66,6 +70,7 @@ def main(argv=None) -> int:
         hdf5_path=a.hdf5, conditioning=a.conditioning, num_steps=a.steps,
         batch_size=a.batch_size, lr=a.lr, lr_backbone=a.lr, kl_weight=a.kl_weight,
         chunk_size=a.chunk_size, use_ensembling=a.use_ensembling,
+        action_repr=a.action_repr,
         num_workers=a.num_workers, seed=a.seed, out_dir=out,
         split_mode=a.split_mode, holdout_combos=combos,
         val_every=a.val_every, log_every=a.log_every,
@@ -73,6 +78,12 @@ def main(argv=None) -> int:
         wandb_run_name=a.wandb_run_name, wandb_group=a.wandb_group,
         wandb_api_key=a.wandb_api_key,
     )
+    if cfg.action_repr == "absolute":
+        print("\n!! action_repr='absolute': the recorded action is ~96% given by "
+              "the observed\n!! joint state, so 'hold position' is a strong L1 "
+              "minimiser and the arm may\n!! never move. See ISSUE-017. Pass "
+              "--action-repr delta unless you are\n!! deliberately reproducing "
+              "an old run.\n")
     trainer = Trainer(cfg)
 
     if a.time_only:

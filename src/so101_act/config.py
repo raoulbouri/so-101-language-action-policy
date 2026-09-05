@@ -28,6 +28,20 @@ Conditioning = Literal["none", "clip", "taskid", "film", "film_token"]
 #   compositional -- E5, whole (cube, zone) combinations held out for test
 SplitMode = Literal["iid", "compositional"]
 
+# Action representation:
+#   absolute -- predict joint targets directly. This is what ACT/ALOHA does, but
+#               it assumes the action differs meaningfully from the observed
+#               state. Here the expert is a smooth quintic tracked by a stiff
+#               position servo, so mean |action - qpos| is 1.06 deg against an
+#               action std of 24.67 deg: the command-ahead term is 4.3% of the
+#               action range (0.6% on shoulder_pan). The L1 optimum is then to
+#               echo the current position, and the arm never moves. See
+#               ISSUE-017.
+#   delta    -- predict action[t+h] - qpos[t], normalised per horizon, so the
+#               signal fills the target range at every h and "hold position"
+#               stops being a good minimiser.
+ActionRepr = Literal["absolute", "delta"]
+
 
 @dataclass
 class Config:
@@ -57,6 +71,10 @@ class Config:
 
     # ---- model ------------------------------------------------------------
     conditioning: Conditioning = "none"
+    # Defaults to "absolute" so configs written before ISSUE-017 keep loading
+    # and evaluating exactly as they were trained. New runs should pass
+    # --action-repr delta.
+    action_repr: ActionRepr = "absolute"
     hidden_dim: int = 512                # ACT default d_model
     dim_feedforward: int = 3200          # ACT default
     nheads: int = 8

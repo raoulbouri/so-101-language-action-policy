@@ -27,6 +27,7 @@ from so101_act.data import (
     scan_episodes,
 )
 from so101_act.evaluate import (
+    shortcut_baselines,
     counterfactual_divergence,
     offline_metrics,
     windowed_language_sensitivity,
@@ -52,7 +53,8 @@ def make_loader(cfg, episodes, idx, norm, *, shuffle_language=False, bs=16, work
     ds = SO101ACTDataset(cfg.hdf5_path, episodes, idx, norm,
                          chunk_size=cfg.chunk_size, cameras=cfg.cameras,
                          conditioning=cfg.conditioning,
-                         shuffle_language=shuffle_language, language_seed=cfg.seed)
+                         shuffle_language=shuffle_language, language_seed=cfg.seed,
+                         action_repr=cfg.action_repr)
     return ds, DataLoader(ds, batch_size=bs, shuffle=False, num_workers=workers,
                           collate_fn=collate)
 
@@ -87,15 +89,36 @@ def main(argv=None) -> int:
         # --- offline (E1 / E2 / E5 depending on the run) -------------------
         _, test_loader = make_loader(cfg, episodes, splits["test"], norm)
         entry["offline_test"] = offline_metrics(
-            model, test_loader, device, cfg.kl_weight, norm, a.max_batches)
+            model, test_loader, device, cfg.kl_weight, norm, a.max_batches,
+            action_repr=cfg.action_repr)
         print(f"  masked L1 (test)          {entry['offline_test']['masked_l1']:.4f}")
+
+        # ISSUE-017 gate. A policy that does not beat "hold the current
+        # position" at every horizon has learned nothing, whatever its L1 says.
+        entry["shortcut_baselines"] = shortcut_baselines(
+            model, test_loader, device, norm, action_repr=cfg.action_repr,
+            max_batches=a.max_batches)
+        sb = entry["shortcut_baselines"]
+        print(f"  vs identity (hold pos)    {sb['gain_over_identity_pct']:+.1f}%  "
+              f"worst horizon {sb['worst_horizon_gain_over_identity_pct']:+.1f}%")
+        print(f"  vs scene-blind mean       {sb['gain_over_scene_blind_pct']:+.1f}%")
+        print(f"  commanded lead            {np.degrees(sb['commanded_lead_rad']):.3f} deg "
+              f"vs expert {np.degrees(sb['expert_lead_rad']):.3f} deg  "
+              f"(ratio {sb['lead_ratio']:.2f})")
+        if not sb["passes"]:
+            why = ("it commands only a fraction of the expert's motion, so the arm "
+                   "barely moves" if sb["under_driving"] else
+                   "at some horizon it is no better than holding position")
+            print(f"  !! FAILS the ISSUE-017 gate: {why}.\n"
+                  "  !! Closed-loop success will be ~0. Do not spend GPU on rollouts.")
 
         if cfg.use_language:
             # --- E3: shuffled language ------------------------------------
             _, shuf_loader = make_loader(cfg, episodes, splits["test"], norm,
                                          shuffle_language=True)
             entry["E3_shuffled_language"] = offline_metrics(
-                model, shuf_loader, device, cfg.kl_weight, norm, a.max_batches)
+                model, shuf_loader, device, cfg.kl_weight, norm, a.max_batches,
+                action_repr=cfg.action_repr)
             d = entry["E3_shuffled_language"]["masked_l1"]
             base = entry["offline_test"]["masked_l1"]
             entry["E3_degradation"] = d - base
@@ -136,6 +159,7 @@ def main(argv=None) -> int:
                     model, norm, device, info.seed,
                     language_embedding=emb[info.name], task_id=info.task_id,
                     use_ensembling=cfg.use_ensembling,
+                    action_repr=cfg.action_repr,
                     n_action_steps=cfg.n_action_steps))
             entry["closed_loop"] = summarize(rows)
             entry["closed_loop_rows"] = rows
@@ -159,6 +183,7 @@ def main(argv=None) -> int:
                         language_embedding=emb[episodes[j].name],
                         task_id=episodes[j].task_id,
                         use_ensembling=cfg.use_ensembling,
+                    action_repr=cfg.action_repr,
                         n_action_steps=cfg.n_action_steps)
                     r["given_instruction"] = episodes[j].instruction
                     r["true_instruction"] = info.instruction

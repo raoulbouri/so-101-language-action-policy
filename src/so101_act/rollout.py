@@ -89,6 +89,7 @@ def rollout_episode(
     ensemble_m: float = 0.01,
     use_ensembling: bool = False,
     n_action_steps: int | None = None,
+    action_repr: str = "absolute",
     renderer=None,
 ) -> dict:
     """Run one closed-loop episode. `language_embedding` overrides the episode's
@@ -140,14 +141,15 @@ def rollout_episode(
                 "task_id": tid,
             }
             if ens is not None:
-                chunk = norm.denorm_action(model(batch)["actions"][0].cpu().numpy())
+                chunk = norm.denorm_chunk(
+                    model(batch)["actions"][0].cpu().numpy(), qpos, action_repr)
                 ens.add(t, chunk)
                 action = ens.action_for(t)
             else:
                 # Replan every n_exec steps, execute the chunk open-loop between.
                 if pending is None or t % n_exec == 0:
-                    pending = norm.denorm_action(
-                        model(batch)["actions"][0].cpu().numpy())
+                    pending = norm.denorm_chunk(
+                        model(batch)["actions"][0].cpu().numpy(), qpos, action_repr)
                 action = pending[t % n_exec]
             data.ctrl[:] = action
             for _ in range(PHYSICS_SUBSTEPS):

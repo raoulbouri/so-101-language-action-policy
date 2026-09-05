@@ -167,6 +167,72 @@ def counterfactual_divergence(model, dataset: SO101ACTDataset, device, *,
     }
 
 
+# Windows chosen around what the observation can and cannot explain. At t=0-4
+# the arm is at home with 2-3 cubes visible and ONLY the instruction says which
+# to fetch, so a grounded policy must degrade sharply when language is shuffled.
+# Later windows are progressively more determined by vision alone, because the
+# arm is already committed to a target.
+DEFAULT_WINDOWS = ((0, 5), (0, 20), (20, 60), (60, 150), (150, 10_000))
+
+
+@torch.no_grad()
+def windowed_language_sensitivity(
+    model, hdf5_path, episodes, indices, norm, cfg, device, *,
+    windows=DEFAULT_WINDOWS, max_samples: int = 640, batch_size: int = 32,
+) -> dict:
+    """E3, resolved by timestep window rather than averaged over the episode.
+
+    Whole-episode E3 dilutes the signal badly: only ~4 % of timesteps are ones
+    where language is the sole disambiguator, so a policy can ignore language
+    entirely and still move the episode-average by a fraction of a percent. This
+    reports the degradation where it should be largest.
+
+    Uses stored observations, so it is valid even when closed-loop success is 0.
+    """
+    from .data import SO101ACTDataset, collate
+
+    model.eval()
+
+    def build(shuffle: bool):
+        return SO101ACTDataset(
+            hdf5_path, episodes, indices, norm, chunk_size=cfg.chunk_size,
+            cameras=cfg.cameras, conditioning=cfg.conditioning,
+            shuffle_language=shuffle, language_seed=cfg.seed,
+        )
+
+    plain, shuf = build(False), build(True)
+
+    def masked_l1(ds, lo, hi):
+        idx = [i for i, (_, t) in enumerate(ds._index) if lo <= t < hi]
+        if not idx:
+            return None
+        idx = idx[:max_samples]
+        tot = cnt = 0.0
+        for s in range(0, len(idx), batch_size):
+            b = collate([ds[i] for i in idx[s:s + batch_size]])
+            b = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in b.items()}
+            out = model(b)
+            err = (out["actions"] - b["action_chunk"]).abs()
+            m = b["action_chunk_mask"].unsqueeze(-1).to(err.dtype)
+            tot += (err * m).sum().item()
+            cnt += (m.sum() * err.shape[-1]).item()
+        return tot / max(cnt, 1e-9)
+
+    rows = {}
+    for lo, hi in windows:
+        n = masked_l1(plain, lo, hi)
+        sh = masked_l1(shuf, lo, hi)
+        if n is None:
+            continue
+        # Inclusive label for a half-open window: [lo, hi) -> "t=lo..hi-1".
+        rows[f"t={lo}..{min(hi, 443) - 1}"] = {
+            "normal": n, "shuffled": sh,
+            "degradation": sh - n,
+            "degradation_pct": 100.0 * (sh - n) / max(n, 1e-9),
+        }
+    return rows
+
+
 def save_report(path: str | Path, payload: dict) -> None:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)

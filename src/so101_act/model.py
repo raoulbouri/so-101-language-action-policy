@@ -323,3 +323,34 @@ def act_loss(pred: dict, batch: dict, kl_weight: float) -> dict[str, Tensor]:
 
 def build_model(cfg) -> ACT:
     return ACT(cfg)
+
+
+# ResNet18 child order inside the old nn.Sequential backbone:
+#   0 conv1, 1 bn1, 2 relu, 3 maxpool, 4 layer1, 5 layer2, 6 layer3, 7 layer4
+_LEGACY_BACKBONE_MAP = {
+    "body.0": "stem.0", "body.1": "stem.1",
+    "body.4": "layer1", "body.5": "layer2",
+    "body.6": "layer3", "body.7": "layer4",
+}
+
+
+def upgrade_legacy_state_dict(sd: dict) -> dict:
+    """Remap checkpoints saved before the backbone was split into named stages.
+
+    Adding FiLM required addressing ResNet stages individually, which renamed
+    every backbone key from `body.<i>` to `stem`/`layer1..4`. Checkpoints trained
+    before that change would otherwise fail to load with a wall of missing keys
+    that says nothing about the real cause. See ISSUE-013.
+    """
+    if not any(".body." in k for k in sd):
+        return sd
+    out = {}
+    for k, v in sd.items():
+        nk = k
+        for old, new in _LEGACY_BACKBONE_MAP.items():
+            token = f".{old}."
+            if token in k:
+                nk = k.replace(token, f".{new}.")
+                break
+        out[nk] = v
+    return out

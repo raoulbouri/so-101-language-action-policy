@@ -26,8 +26,12 @@ from so101_act.data import (
     make_splits,
     scan_episodes,
 )
-from so101_act.evaluate import counterfactual_divergence, offline_metrics
-from so101_act.model import build_model
+from so101_act.evaluate import (
+    counterfactual_divergence,
+    offline_metrics,
+    windowed_language_sensitivity,
+)
+from so101_act.model import build_model, upgrade_legacy_state_dict
 from so101_act.train import pick_device
 
 
@@ -39,7 +43,7 @@ def load_run(run_dir: Path, device):
         ckpt_path = run_dir / "ckpt_final.pt"
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     model = build_model(cfg).to(device)
-    model.load_state_dict(ckpt["model"])
+    model.load_state_dict(upgrade_legacy_state_dict(ckpt["model"]))
     model.eval()
     return cfg, norm, model, ckpt.get("step", -1), ckpt_path.name
 
@@ -98,6 +102,15 @@ def main(argv=None) -> int:
             entry["E3_relative_degradation"] = (d - base) / max(base, 1e-9)
             print(f"  masked L1 (shuffled lang) {d:.4f}   "
                   f"degradation {d-base:+.4f} ({100*(d-base)/max(base,1e-9):+.1f}%)")
+
+            # --- E3 by timestep window (the sharpest grounding probe) -----
+            entry["E3_windowed"] = windowed_language_sensitivity(
+                model, cfg.hdf5_path, episodes, splits["test"], norm, cfg, device)
+            # Print every window; the earliest one is the sharpest probe
+            # (arm at home, only language names the target).
+            for wname, w in entry["E3_windowed"].items():
+                print(f"  E3 {wname:12s} {w['normal']:.4f} -> {w['shuffled']:.4f}"
+                      f"  ({w['degradation_pct']:+.1f}%)")
 
             # --- E4: counterfactual divergence ----------------------------
             ds, _ = make_loader(cfg, episodes, splits["test"], norm)
